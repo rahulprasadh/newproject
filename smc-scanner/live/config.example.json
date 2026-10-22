@@ -1,0 +1,75 @@
+{
+  "_readme": "Copy this file to config.json in the same folder and edit it. Keys that start with _ are notes and are ignored. config.json holds your keys, so it is kept out of git.",
+
+  "source": "mt5",
+  "_source": "Where candles come from: mt5 (the MetaTrader 5 terminal on this PC), twelvedata (free API key), csv (a file an MT5 script keeps writing) or replay (the bundled sample, a demo that is not live).",
+
+  "symbol": "XAUUSD",
+  "_symbol": "Name used in alerts and in the data file names under live/data.",
+
+  "timeZone": "Asia/Kolkata",
+  "_timeZone": "Times in alerts and in the log. Any IANA zone name, e.g. Asia/Kolkata, Asia/Dubai, Europe/London.",
+
+  "everyMinutes": 5,
+  "_everyMinutes": "Minutes between checks, 5 to 15. Checks start 8 s after each 5-minute mark (10:05:08, 10:10:08 ...), just after the candle closes.",
+
+  "timeframes": [5, 15],
+  "_timeframes": "Timeframes to scan, in minutes. The smallest is fetched; the others are built from it.",
+
+  "port": 8787,
+  "_port": "The dashboard runs at http://localhost:8787 on this PC only.",
+
+  "historyCandles": 50000,
+  "_historyCandles": "Most candles kept in live/data/<SYMBOL>-5m.csv (50,000 five-minute candles is about 8 months). The forecaster learns from this history, so it gets better as it grows.",
+
+  "mt5": {
+    "python": "python",
+    "symbol": "XAUUSD",
+    "serverUtcOffsetMinutes": "auto",
+    "fallbackOffsetMinutes": null,
+    "terminalPath": "",
+    "pythonArgs": []
+  },
+  "_mt5": "python: the command or full path of python.exe. symbol: the exact name in MT5's Market Watch (XAUUSD, XAUUSD.m, GOLD ...). serverUtcOffsetMinutes: 'auto' measures the broker's server-time offset from live ticks; or a number such as 180 for UTC+3. fallbackOffsetMinutes: used with 'auto' when the market is closed and no offset has been measured yet (often 120 in winter, 180 in summer). terminalPath: the full path of terminal64.exe, only when several MT5 terminals are installed. pythonArgs: extra arguments for Python, usually none.",
+
+  "twelvedata": {
+    "apiKey": "",
+    "symbol": "XAU/USD",
+    "maxCandles": 20000
+  },
+  "_twelvedata": "apiKey: your free key from twelvedata.com. The free plan allows 800 requests a day and 8 a minute; a check every 5 minutes uses one request (288 a day), and the first start uses up to 4 to load maxCandles of history. Twelve Data has no volume for gold, so the volume check on the displacement candle is skipped.",
+
+  "csv": {
+    "path": "",
+    "tzOffsetMinutes": 0
+  },
+  "_csv": "path: a candle file that is re-read every check (relative paths start from this folder). tzOffsetMinutes: the file's time zone when its times carry none; MT5 server time is often 120 or 180.",
+
+  "replay": {
+    "startIndex": null,
+    "start": "",
+    "stepMinutes": null
+  },
+  "_replay": "Demo only. Replays data/sample.js on a virtual clock: start at candle number startIndex or at the date in start (e.g. 2026-09-01); each check reveals stepMinutes more (default everyMinutes). Replay keeps its own files apart from live history.",
+
+  "alerts": {
+    "on": "entry",
+    "console": true,
+    "bell": true,
+    "results": true,
+    "maxAgeMinutes": 30,
+    "telegram": {
+      "botToken": "",
+      "chatId": ""
+    }
+  },
+  "_alerts": "on: 'entry' alerts entries only; 'all' also alerts sweeps, CHoCHs, marked zones and cancelled setups. console: print alerts here, with a beep when bell is true. results: also alert when a trade hits TP or SL. maxAgeMinutes: signals older than this (e.g. after the PC slept) are counted but not sent. telegram: botToken from @BotFather and your chatId; leave empty to skip Telegram.",
+
+  "engine": {
+    "spread": 0.25
+  },
+  "_engine": "Options for the SMC engine, the same as the page's Settings tab (e.g. rr, entryZone, killzones, htfFilter, patterns). spread is in price: 0.25 suits XAUUSD at most brokers; use your broker's typical spread.",
+
+  "predict": {},
+  "_predict": "Options for the next-move forecaster (horizons, liqHorizon, stride ...). Usually left empty."
+}

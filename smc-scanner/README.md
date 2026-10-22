@@ -43,3 +43,10 @@ Run the tests with `node --test smc-scanner/test/*.test.js`.
 | Wins / losses at 2R | 8 / 14 | 3 / 3 |
 
 These numbers are for checking that the marks are right, not proof of an edge: 6 months and 28 trades are far too few to judge the strategy.
+
+## Live scanning and next-move forecast
+
+- `live/runner.js` checks for new closed candles every 5 minutes (configurable). It reads them from MetaTrader 5, a Twelve Data key or a CSV, runs the scan on 5m and 15m, alerts on screen and on Telegram, and serves the dashboard at http://localhost:8787 with a **Live** mode. Setup steps are in `live/README.md`; on Windows, run `live\start-live.bat`.
+- `predict.js` learns from the collected history and forecasts which liquidity (buy-side or sell-side) is likely to be taken first, plus the up/down odds for the next 1h and 4h. Every number is tested only on candles the model has not seen. On the sample, the up/down call is no better than chance (about 50%), and the liquidity call (about 67%) is no better than "the nearer level is hit first". The page says this next to every forecast.
+- Engine precision options: previous-day, session and equal-high/low liquidity, killzones, higher-timeframe trend filter, minimum sweep depth, discount/premium, spread, stop at the sweep or the OB, target at the opposite liquidity, and extra entry patterns (three pins, engulfing). All are in the Settings tab.
+- UI check: `LWC_PATH=<lightweight-charts standalone js> node smc-scanner/tools/ui_check.js <screenshot dir>`.

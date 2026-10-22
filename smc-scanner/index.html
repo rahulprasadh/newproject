@@ -187,6 +187,34 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 .rules b { font-weight: 600; }
 .rules .v { font-family: var(--font-num); font-size: 12.5px; background: var(--raised); padding: 0 4px; border-radius: 3px; }
 
+
+/* next-move card */
+.next { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; background: var(--surface); }
+.next header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; }
+.next .bias { display: flex; align-items: center; gap: 8px; font: 700 19px var(--font-label); letter-spacing: .02em; color: var(--c); }
+.next .bias i { font-style: normal; font-size: 22px; line-height: 1; }
+.hz { display: grid; gap: 4px; }
+.hz .row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13.5px; }
+.hz .row b { font-weight: 600; color: var(--c); }
+.hz .rng { font-size: 12.5px; color: var(--muted); }
+.conf { font: 600 11px var(--font-label); letter-spacing: .07em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; color: var(--muted); white-space: nowrap; }
+.conf.high { color: var(--bull); border-color: color-mix(in srgb, var(--bull) 50%, var(--line)); }
+.conf.medium { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 50%, var(--line)); }
+.draw { font-size: 13.5px; margin: 0; }
+.drv { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
+.drv li::marker { color: var(--muted); }
+.drv .up { color: var(--bull); } .drv .dn { color: var(--bear); }
+.odds { font-size: 13px; margin: 0; padding: 6px 8px; background: var(--raised); border-radius: 5px; }
+.sess { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, auto); gap: 3px 14px; font-size: 13px; }
+.sess span:nth-child(4n+1) { color: var(--muted); }
+.sess .h { font: 600 11px var(--font-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.tag { font: 500 12px var(--font-ui); background: var(--raised); border-radius: 4px; padding: 0 6px; color: var(--muted); }
+.status { font-size: 13px; color: var(--muted); min-width: 0; }
+.status.bad { color: var(--bear); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bull); margin-right: 6px; }
+.status.bad .dot { background: var(--bear); }
+
 /* csv dialog */
 .loader {
   background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
@@ -232,6 +260,7 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
       <div class="seg" id="modeSeg">
         <button type="button" data-mode="history" aria-pressed="true">History</button>
         <button type="button" data-mode="replay" aria-pressed="false">Replay</button>
+        <button type="button" data-mode="live" aria-pressed="false" id="liveBtn" hidden>Live</button>
       </div>
     </div>
     <div class="group" id="layers"><span class="lbl">Show</span></div>
@@ -267,6 +296,14 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
         <label class="check"><input type="checkbox" id="rSound" checked> Sound</label>
         <span class="progress num" id="rProg"></span>
       </div>
+      <div class="replay" id="liveBar" hidden>
+        <span class="status" id="lStatus" role="status"><span class="dot"></span>Connecting to the scanner…</span>
+        <label class="check">Alert on
+          <select class="sel" id="lAlerts"><option value="entry">Entries</option><option value="all">Every step</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="lSound" checked> Sound</label>
+        <button class="btn" type="button" id="lNotify">Enable desktop alerts</button>
+      </div>
     </div>
 
     <aside class="side">
@@ -276,12 +313,17 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
         <button type="button" role="tab" id="tabRules" aria-selected="false" aria-controls="paneRules">Rules</button>
       </div>
       <div class="pane" id="paneSignals" role="tabpanel">
+        <section class="next" id="next" aria-label="Next move forecast"></section>
         <div class="detail" id="detail" hidden></div>
         <section class="funnel" aria-label="How many setups reached each step">
           <h2 id="funnelTitle">Setups found</h2>
           <div id="funnel"></div>
         </section>
         <div class="stats" id="stats"></div>
+        <section style="display:grid;gap:6px" aria-label="Entries by session">
+          <h2>By session</h2>
+          <div class="sess" id="sess"></div>
+        </section>
         <section style="display:grid;gap:8px">
           <h2>Entry signals</h2>
           <div class="list" id="list"></div>
@@ -290,6 +332,7 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
         </section>
       </div>
       <div class="pane" id="paneSettings" role="tabpanel" hidden>
+        <p class="hint" id="liveSetNote" hidden>Live mode shows the scanner's own results. These settings apply to History and Replay; change the scanner's settings in live/config.json.</p>
         <form class="form" id="settings" onsubmit="return false"></form>
         <button class="btn" type="button" id="resetBtn">Reset to defaults</button>
       </div>
@@ -302,12 +345,14 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="engine.js"></script>
+<script src="predict.js"></script>
 <script src="data/sample.js"></script>
 <script>
 (() => {
 'use strict';
 const $ = s => document.querySelector(s);
 const LWC = window.LightweightCharts;
+const SP = window.SMCPredict;
 
 // ---------- preferences ----------
 const store = {
@@ -317,15 +362,28 @@ const store = {
 const LAYERS = [
   ['liq', 'Liquidity', '--liq'], ['sweep', 'Sweeps', '--liq'], ['choch', 'CHoCH', '--fg'],
   ['vol', 'Volume candle', '--gold'], ['fvg', 'FVG / IFVG', '--fvg'], ['ob', 'Order block', '--ob'],
-  ['trade', 'Entries', '--bull'], ['misses', 'Stopped setups', '--muted'],
+  ['trade', 'Entries', '--bull'], ['next', 'Next move', '--gold'], ['misses', 'Stopped setups', '--muted'],
 ];
+// XAUUSD starting point: the engine defaults plus a typical gold spread
+const PRESET = {
+  ...SMC.DEFAULTS, spread: 0.25,
+  patterns: { ...SMC.DEFAULTS.patterns }, liqSources: { ...SMC.DEFAULTS.liqSources }, killzones: [],
+};
+function withPreset(o = {}) {
+  return {
+    ...PRESET, ...o,
+    patterns: { ...PRESET.patterns, ...(o.patterns || {}) },
+    liqSources: { ...PRESET.liqSources, ...(o.liqSources || {}) },
+    killzones: Array.isArray(o.killzones) ? o.killzones.filter(k => k in SMC.SESSIONS) : [],
+  };
+}
 const state = {
   base: null, tf: 300, bars: [], eng: null, byId: new Map(),
-  opts: { ...SMC.DEFAULTS, ...store.get('opts', {}) },
-  layers: { liq: true, sweep: true, choch: true, vol: true, fvg: true, ob: true, trade: true, misses: false, ...store.get('layers', {}) },
+  opts: withPreset(store.get('opts', {})),
+  layers: { liq: true, sweep: true, choch: true, vol: true, fvg: true, ob: true, trade: true, next: true, misses: false, ...store.get('layers', {}) },
   mode: 'history', cursor: 0, playing: false, selected: null, tz: store.get('tz', 'local'),
+  wf: null, fc: null, trainMsg: '', liveData: null, liveTf: null,
 };
-state.opts.patterns = { ...SMC.DEFAULTS.patterns, ...(state.opts.patterns || {}) };
 
 // ---------- colours from the theme ----------
 let P = {};
@@ -343,6 +401,8 @@ function rgba(hex, a) {
 
 // ---------- formatting ----------
 const fmtP = p => p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = p => Math.round(100 * p) + '%';
+const fmtR = r => (Math.round(r * 10) / 10).toString();
 let fmtDT, fmtT, fmtD, fmtM;
 function makeFormatters() {
   const tz = state.tz === 'utc' ? { timeZone: 'UTC' } : {};
@@ -354,6 +414,9 @@ function makeFormatters() {
 const dt = t => fmtDT.format(t * 1000);
 const tm = t => fmtT.format(t * 1000);
 const tfName = s => (s % 3600 === 0 ? `${s / 3600}h` : `${s / 60}m`);
+const hzName = m => (m % 60 === 0 ? (m === 60 ? '1h' : `${m / 60}h`) : `${m} min`);
+const SESSION_NAME = { asia: 'Asia', london: 'London', ny: 'New York', off: 'Off-hours' };
+const trendName = b => (b === 'bull' ? 'up' : b === 'bear' ? 'down' : 'unclear');
 
 // ---------- chart ----------
 class Overlay {
@@ -419,14 +482,14 @@ function drawOverlay(target, data) {
         if (x1 > bitmapSize.width || x2 < 0) continue;
         ctx.strokeStyle = d.color;
         ctx.lineWidth = Math.max(1, Math.round((d.width || 1) * hr));
-        ctx.setLineDash(d.dash ? [4 * hr, 3 * hr] : []);
+        ctx.setLineDash(d.dot ? [1.5 * hr, 3 * hr] : d.dash ? [4 * hr, 3 * hr] : []);
         ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
         if (d.label) {
           ctx.font = font;
           ctx.fillStyle = d.color;
-          ctx.textBaseline = 'bottom';
+          ctx.textBaseline = d.below ? 'top' : 'bottom';
           const tw = ctx.measureText(d.label).width;
-          ctx.fillText(d.label, Math.max(x1, x2 - tw - 4 * hr), y - 2 * vr);
+          ctx.fillText(d.label, Math.max(x1, x2 - tw - 4 * hr), d.below ? y + 2 * vr : y - 2 * vr);
         }
       }
     }
@@ -448,7 +511,8 @@ const chart = LWC.createChart($('#chart'), {
   layout: { background: { type: 'solid', color: P.surface }, textColor: P.muted, fontFamily: 'JetBrains Mono, ui-monospace, monospace', fontSize: 11 },
   grid: { vertLines: { color: P.grid }, horzLines: { color: P.grid } },
   rightPriceScale: { borderColor: P.line, scaleMargins: { top: 0.08, bottom: 0.2 } },
-  timeScale: { borderColor: P.line, timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 8, tickMarkFormatter: TICK },
+  // room on the right for the next-move liquidity targets
+  timeScale: { borderColor: P.line, timeVisible: true, secondsVisible: false, rightOffset: 16, barSpacing: 8, tickMarkFormatter: TICK },
   crosshair: { mode: LWC.CrosshairMode.Normal },
   localization: { timeFormatter: t => dt(t), priceFormatter: p => p.toFixed(2) },
 });
@@ -476,27 +540,36 @@ function applyTheme() {
 applyTheme();
 
 // ---------- data + engine ----------
+function baseTfs() {
+  const tf = state.base.tf;
+  return [...new Set([tf, 300, 900].filter(x => x >= tf && x % tf === 0))].sort((a, b) => a - b);
+}
+function tfButtons(options) {
+  const html = options.map(x => `<button type="button" data-tf="${x}">${tfName(x)}</button>`).join('');
+  if ($('#tfSeg').innerHTML !== html) $('#tfSeg').innerHTML = html;
+  for (const b of $('#tfSeg').children) b.setAttribute('aria-pressed', String(+b.dataset.tf === state.tf));
+}
 function setBase(bars, meta) {
   const tf = SMC.detectTimeframe(bars);
   state.base = { bars, tf, ...meta };
-  const options = [...new Set([tf, 300, 900].filter(x => x >= tf && x % tf === 0))].sort((a, b) => a - b);
-  $('#tfSeg').innerHTML = options.map(x => `<button type="button" data-tf="${x}">${tfName(x)}</button>`).join('');
+  const options = baseTfs();
   const first = new Date(bars[0].t * 1000), last = new Date(bars[bars.length - 1].t * 1000);
   const span = `${fmtD.format(first)} – ${fmtD.format(last)} ${last.getUTCFullYear()}`;
-  $('#src').innerHTML = `<b class="num">${bars.length.toLocaleString('en-US')}</b> ${tfName(tf)} candles · ${span} · ${escapeHtml(meta.source)}`;
+  state.baseSrc = `<b class="num">${bars.length.toLocaleString('en-US')}</b> ${tfName(tf)} candles · ${span} · ${escapeHtml(meta.source)}`;
+  $('#src').innerHTML = state.baseSrc;
   setTf(options.includes(state.tf) ? state.tf : options[0]);
 }
 function setTf(tf) {
   state.tf = tf;
-  for (const b of $('#tfSeg').children) b.setAttribute('aria-pressed', String(+b.dataset.tf === tf));
+  if (state.mode === 'live') { applyLiveTf(true); return; }
+  tfButtons(baseTfs());
   state.bars = tf === state.base.tf ? state.base.bars : SMC.resample(state.base.bars, tf);
   buildSeriesData();
   runEngine();
   if (state.mode === 'replay') startReplay(true);
   else { state.cursor = state.bars.length - 1; fullRender(); selectLatest(); }
 }
-function runEngine() {
-  state.eng = SMC.run(state.bars, state.opts);
+function indexEngine() {
   state.byId = new Map(state.eng.setups.map(s => [s.id, s]));
   state.liq = state.eng.events.filter(e => e.type === 'liq');
   state.alertsAt = new Map();
@@ -505,6 +578,77 @@ function runEngine() {
     if (!state.alertsAt.has(ev.at)) state.alertsAt.set(ev.at, []);
     state.alertsAt.get(ev.at).push(ev);
   }
+}
+function runEngine() {
+  state.eng = SMC.run(state.bars, state.opts);
+  indexEngine();
+  train();
+}
+
+// ---------- next-move forecaster ----------
+// Trained in a worker on the loaded candles; falls back to the page thread if workers are unavailable.
+let worker = null, trainId = 0;
+function predictOpts(n) {
+  const D = SP.DEFAULTS, rows = Math.floor((n - D.warmup) / D.stride);
+  if (rows >= D.minTrain + 600) return {};
+  if (rows < 900) return null;
+  return { minTrain: Math.floor(rows * 0.6) };
+}
+function train() {
+  const id = ++trainId, n = state.bars.length, popts = predictOpts(n);
+  state.wf = null;
+  state.fc = null;
+  if (!popts) {
+    const need = 900 * SP.DEFAULTS.stride + SP.DEFAULTS.warmup;
+    state.trainMsg = `The forecast needs at least ${need.toLocaleString('en-US')} ${tfName(state.tf)} candles. Still collecting history (${n.toLocaleString('en-US')} so far).`;
+    return;
+  }
+  state.trainMsg = `Training on ${n.toLocaleString('en-US')} candles…`;
+  const done = (wf, err) => {
+    if (id !== trainId || state.mode === 'live') return;
+    if (err) state.trainMsg = `The forecast could not be trained: ${err}`;
+    else state.wf = wf;
+    state.fc = null;
+    renderNext();
+    drawOverlays();
+  };
+  const eng = state.eng;
+  const inline = () => setTimeout(() => {
+    if (id !== trainId) return;
+    try {
+      const wf = SP.walkForward(eng, popts);
+      delete wf.rows;
+      done(wf);
+    } catch (e) { done(null, e.message); }
+  }, 60);
+  if (worker === false || typeof Worker === 'undefined') { inline(); return; }
+  try {
+    if (!worker) {
+      worker = new Worker('predict-worker.js');
+      worker.onmessage = ev => { if (worker.pending && ev.data.id === worker.pending.id) worker.pending.done(ev.data.wf, ev.data.error); };
+      worker.onerror = ev => {
+        ev.preventDefault();
+        worker.terminate();
+        const p = worker.pending;
+        worker = false;
+        if (p) p.retry();
+      };
+    }
+    worker.pending = { id, done, retry: inline };
+    worker.postMessage({ id, bars: state.bars, opts: state.opts, popts });
+  } catch {
+    worker = false;
+    inline();
+  }
+}
+function forecastAt(c) {
+  if (state.mode === 'live') return state.liveTf ? state.liveTf.forecast : null;
+  if (!state.wf) return null;
+  if (state.fc && state.fc.c === c && state.fc.eng === state.eng) return state.fc.f;
+  let f = null;
+  try { f = SP.forecast(state.eng, c, state.wf); } catch { f = null; }
+  state.fc = { c, f, eng: state.eng };
+  return f;
 }
 
 // ---------- what is visible at the cursor ----------
@@ -523,14 +667,17 @@ function stageAt(s, c) {
   return 'live';
 }
 function endOf(s, c) { return s.endAt !== null && s.endAt <= c ? s.endAt : c; }
+const sideLabel = s => s.label || (s.dir === 'bull' ? 'SSL' : 'BSL');
 
 function drawOverlays() {
   const c = state.cursor, L = state.layers, B = state.bars, items = [], marks = [];
-  const shortPat = p => (p === 'Pin bar' ? 'Pin' : 'H&S');
+  if (!B.length || !state.eng) return;
+  const shortPat = p => ({ 'Pin bar': 'Pin', 'Head & shoulders': 'H&S', 'Three pins': '3 pins', Engulfing: 'Engulf' }[p] || p);
   if (L.liq) {
     for (const lv of state.liq) {
       if (lv.at > c || (lv.endAt !== null && lv.endAt <= c)) continue;
-      items.push({ kind: 'line', i1: lv.i, i2: c, price: lv.price, color: rgba(P.liq, 0.45), dash: true });
+      const key = lv.src && lv.src !== 'swing';
+      items.push({ kind: 'line', i1: lv.i, i2: c, price: lv.price, color: rgba(P.liq, key ? 0.75 : 0.45), dash: true, label: key ? lv.label : null });
     }
   }
   for (const s of visibleSetups(c)) {
@@ -538,7 +685,7 @@ function drawOverlays() {
     const a = st === 'stopped' ? 0.45 : 1, fillA = (sel ? 0.22 : 0.13) * (st === 'stopped' ? 0.6 : 1);
     const pos = bull ? 'belowBar' : 'aboveBar', end = endOf(s, c);
     if (L.liq || L.sweep) {
-      items.push({ kind: 'line', i1: s.level.i, i2: s.sweepAt, price: s.level.price, color: rgba(P.liq, 0.9 * a), dash: true, label: bull ? 'SSL swept' : 'BSL swept', width: sel ? 1.5 : 1 });
+      items.push({ kind: 'line', i1: s.level.i, i2: s.sweepAt, price: s.level.price, color: rgba(P.liq, 0.9 * a), dash: true, label: `${sideLabel(s)} swept`, width: sel ? 1.5 : 1 });
     }
     if (L.sweep) marks.push({ time: B[s.sweepAt].t, position: pos, color: P.liq, shape: 'circle', text: 'Sweep' });
     if (L.choch && s.chochAt !== null && s.chochAt <= c) {
@@ -564,9 +711,16 @@ function drawOverlays() {
       marks.push({ time: B[e.i].t, position: pos, color: bull ? P.bull : P.bear, shape: bull ? 'arrowUp' : 'arrowDown', text: `${bull ? 'Buy' : 'Sell'} · ${shortPat(e.pattern)}` });
       if (done) {
         const win = e.outcome === 'win';
-        marks.push({ time: B[e.exitAt].t, position: bull === win ? 'aboveBar' : 'belowBar', color: win ? P.bull : P.bear, shape: 'circle', text: win ? `TP +${e.rr}R` : 'SL −1R' });
+        marks.push({ time: B[e.exitAt].t, position: bull === win ? 'aboveBar' : 'belowBar', color: win ? P.bull : P.bear, shape: 'circle', text: win ? `TP +${fmtR(e.rr)}R` : 'SL −1R' });
       }
     }
+  }
+  // the forecast's two liquidity targets, right of the cursor
+  const f = L.next ? forecastAt(c) : null;
+  if (f && f.liquidity) {
+    const q = f.liquidity, pA = q.pAboveFirst;
+    if (q.above) items.push({ kind: 'line', i1: c + 1, i2: c + 15, price: q.above.price, color: P.bull, dot: true, width: 2, label: `BSL ${pA !== null ? pct(pA) : ''}`.trim() });
+    if (q.below) items.push({ kind: 'line', i1: c + 1, i2: c + 15, price: q.below.price, color: P.bear, dot: true, width: 2, below: true, label: `SSL ${pA !== null ? pct(1 - pA) : ''}`.trim() });
   }
   marks.sort((x, y) => x.time - y.time);
   candles.setMarkers(marks);
@@ -576,6 +730,7 @@ function drawOverlays() {
 // ---------- side panel ----------
 function render() {
   drawOverlays();
+  renderNext();
   renderFunnel();
   renderList();
   renderDetail();
@@ -588,11 +743,54 @@ function legendFor(i) {
   const col = b.c >= b.o ? P.bull : P.bear;
   $('#legend').innerHTML = `<span>${dt(b.t)}</span><span>O <b>${fmtP(b.o)}</b></span><span>H <b>${fmtP(b.h)}</b></span><span>L <b>${fmtP(b.l)}</b></span><span>C <b style="color:${col}">${fmtP(b.c)}</b></span><span>Vol <b>${(b.v || 0).toLocaleString('en-US')}</b></span>`;
 }
+const confChip = c => `<span class="conf ${c}" title="How often calls like this were right on candles the model had not seen">${c} confidence</span>`;
+function renderNext() {
+  const box = $('#next'), c = state.cursor;
+  const f = state.bars.length ? forecastAt(c) : null;
+  const head = sub => `<header><h2>Next move</h2>${sub ? `<span class="hint">${sub}</span>` : ''}</header>`;
+  if (!f) {
+    let msg;
+    if (state.mode === 'live') {
+      const q = state.liveTf && state.liveTf.quality;
+      msg = q && q.note ? escapeHtml(q.note) : 'The scanner is still collecting history before it can forecast.';
+    } else if (!state.wf) msg = escapeHtml(state.trainMsg || 'Waiting for candles…');
+    else msg = 'Still collecting history: no tested model covers candles this early yet. Move further on in the data.';
+    box.innerHTML = `${head('')}<p class="hint">${msg}</p>`;
+    return;
+  }
+  const arrow = { up: ['▲', 'Leaning up', P.bull], down: ['▼', 'Leaning down', P.bear], neutral: ['◆', 'No clear lean', P.muted] }[f.bias];
+  const hz = f.horizons.map(h => {
+    const up = h.pUp >= 0.5, p = up ? h.pUp : 1 - h.pUp;
+    const rng = h.range ? `<span class="rng">typical move ±<span class="num">${fmtP(h.range.p50)}</span> · 4 in 5 within ±<span class="num">${fmtP(h.range.p80)}</span></span>` : '';
+    return `<div class="row" style="--c:${up ? P.bull : P.bear}"><span><b>${up ? 'Up' : 'Down'} ${pct(p)}</b> in the next ${hzName(h.minutes)}</span>${confChip(h.confidence)}${rng}</div>`;
+  }).join('');
+  const q = f.liquidity, lvl = (side, l) => `${side} liquidity <span class="num">${fmtP(l.price)}</span> (${escapeHtml(l.label)}, ${l.distAtr.toFixed(1)} ATR away)`;
+  let draw;
+  if (q.above && q.below && q.pAboveFirst !== null) {
+    const up = q.pAboveFirst >= 0.5;
+    draw = `${lvl('Buy-side', q.above)} vs ${lvl('sell-side', q.below)}: <b style="color:${up ? P.bull : P.bear}">${pct(up ? q.pAboveFirst : 1 - q.pAboveFirst)} chance ${up ? 'buy' : 'sell'}-side is taken first</b> ${confChip(q.confidence)}`;
+  } else if (q.above || q.below) {
+    draw = `${q.above ? lvl('Buy-side', q.above) : lvl('Sell-side', q.below)}. No ${q.above ? 'sell' : 'buy'}-side level is active, so there is no draw to compare.`;
+  } else draw = 'No active liquidity levels on either side.';
+  const drv = f.drivers.length ? `<ul class="drv">${f.drivers.map(d => `<li>${escapeHtml(d.label)} <span class="${d.effect > 0 ? 'up' : 'dn'}">${d.effect > 0 ? '↑' : '↓'}</span></li>`).join('')}</ul>` : '';
+  const k = 'dir' + f.horizons[0].minutes, qd = f.quality[k], ql = f.quality.liq;
+  let honest = 'No out-of-sample test results yet at this candle.';
+  if (qd && qd.n) {
+    honest = `Tested on ${qd.n.toLocaleString('en-US')} past candles it had not seen, the ${hzName(f.horizons[0].minutes)} call was right ${pct(qd.accuracy)} of the time vs ${pct(qd.baseline)} by always guessing the more common outcome.`;
+    if (ql && ql.n && ql.randomWalk !== null && ql.randomWalk !== undefined) honest += ` The liquidity call was right ${pct(ql.accuracy)} vs ${pct(ql.randomWalk)} from distance alone (n=${ql.n.toLocaleString('en-US')}).`;
+  }
+  const b = state.bars[c];
+  box.innerHTML = `${head(`from the ${tm(b.t)} close · <span class="num">${fmtP(b.c)}</span>`)}
+    <div class="bias" style="--c:${arrow[2]}"><i aria-hidden="true">${arrow[0]}</i>${arrow[1]}</div>
+    <div class="hz">${hz}</div>
+    <p class="draw">${draw}</p>${drv}
+    <p class="hint">${honest} Odds, not a promise.</p>`;
+}
 function renderFunnel() {
   const c = state.cursor, S = state.eng.setups.filter(s => s.sweepAt <= c);
   const at = k => S.filter(s => s[k] !== null && s[k] <= c).length;
   const entries = S.map(s => s.entry).filter(e => e && e.i <= c);
-  const zoneName = { ob: 'order block', fvg: 'FVG / IFVG', either: 'FVG or OB' }[state.opts.entryZone];
+  const zoneName = { ob: 'order block', fvg: 'FVG / IFVG', either: 'FVG or OB' }[state.mode === 'live' ? 'ob' : state.opts.entryZone];
   const rows = [
     ['Liquidity sweeps', S.length], ['CHoCH after the sweep', at('chochAt')], ['Volume candle + FVG / IFVG', at('armedAt')],
     [`Price back at the ${zoneName}`, at('touchAt')], ['Entry pattern printed', entries.length],
@@ -600,18 +798,30 @@ function renderFunnel() {
   const max = Math.max(1, rows[0][1]);
   $('#funnel').innerHTML = rows.map(([name, n]) =>
     `<div class="frow"><div class="bar"><i style="width:${(100 * n / max).toFixed(1)}%"></i><span>${name}</span></div><span class="n num">${n.toLocaleString('en-US')}</span></div>`).join('');
-  $('#funnelTitle').textContent = state.mode === 'replay' ? 'Setups found so far' : `Setups found on ${tfName(state.tf)}`;
+  $('#funnelTitle').textContent = state.mode === 'replay' ? 'Setups found so far'
+    : state.mode === 'live' ? `Setups in the last ${state.bars.length.toLocaleString('en-US')} ${tfName(state.tf)} candles` : `Setups found on ${tfName(state.tf)}`;
   const closed = entries.filter(e => e.exitAt !== null && e.exitAt <= c);
   const wins = closed.filter(e => e.outcome === 'win').length, losses = closed.length - wins;
   const netR = closed.reduce((r, e) => r + (e.outcome === 'win' ? e.rr : -1), 0);
   const stat = (k, v, col) => `<div class="stat"><small>${k}</small><b${col ? ` style="color:${col}"` : ''}>${v}</b></div>`;
   $('#stats').innerHTML = stat('Wins', wins, P.bull) + stat('Losses', losses, P.bear)
     + stat('Win rate', closed.length ? Math.round(100 * wins / closed.length) + '%' : '–')
-    + stat(`Net (${state.opts.rr}R)`, (netR > 0 ? '+' : '') + netR.toFixed(1) + 'R', netR > 0 ? P.bull : netR < 0 ? P.bear : null);
+    + stat('Net', (netR > 0 ? '+' : '') + netR.toFixed(1) + 'R', netR > 0 ? P.bull : netR < 0 ? P.bear : null);
+  const by = {};
+  for (const e of entries) {
+    const k = e.session || 'off', r = by[k] || (by[k] = { n: 0, w: 0, closed: 0 });
+    r.n++;
+    if (e.exitAt !== null && e.exitAt <= c) { r.closed++; if (e.outcome === 'win') r.w++; }
+  }
+  $('#sess').innerHTML = '<span class="h">Session</span><span class="h">Entries</span><span class="h">Win rate</span><span class="h">Closed</span>'
+    + ['asia', 'london', 'ny', 'off'].map(k => {
+      const r = by[k] || { n: 0, w: 0, closed: 0 };
+      return `<span>${SESSION_NAME[k]}</span><span class="num">${r.n}</span><span class="num">${r.closed ? pct(r.w / r.closed) : '–'}</span><span class="num">${r.closed}</span>`;
+    }).join('');
 }
 function resultOf(e, c) {
   if (e.exitAt !== null && e.exitAt <= c) {
-    return e.outcome === 'win' ? [`+${e.rr}R`, P.bull] : ['−1R', P.bear];
+    return e.outcome === 'win' ? [`+${fmtR(e.rr)}R`, P.bull] : ['−1R', P.bear];
   }
   return ['Open', P.muted];
 }
@@ -620,12 +830,13 @@ function renderList() {
   const done = state.eng.setups.filter(s => s.entry && s.entry.i <= c).reverse();
   $('#list').innerHTML = done.length ? done.map(s => {
     const e = s.entry, bull = s.dir === 'bull', [res, col] = resultOf(e, c);
+    const htf = s.htfBias ? ` · HTF ${trendName(s.htfBias)}` : '';
     return `<button type="button" class="sig" data-id="${s.id}" aria-current="${s.id === state.selected}">
       <span class="pill" style="--c:${bull ? P.bull : P.bear}">${bull ? 'Buy' : 'Sell'}</span>
       <span class="num">${fmtP(e.entry)}</span>
       <span class="res" style="--c:${col}">${res}</span>
-      <span class="meta">${dt(state.bars[e.i].t)} · ${e.pattern} at ${e.zone}</span></button>`;
-  }).join('') : `<div class="empty">${state.mode === 'replay' ? 'No entry yet. Press Play or Next signal.' : 'No complete setups with these settings. Try the 5m chart or loosen the settings.'}</div>`;
+      <span class="meta">${dt(state.bars[e.i].t)} · ${escapeHtml(sideLabel(s))} swept · ${SESSION_NAME[e.session] || 'Off-hours'}${htf} · ${e.pattern} at ${e.zone}</span></button>`;
+  }).join('') : `<div class="empty">${state.mode === 'replay' ? 'No entry yet. Press Play or Next signal.' : state.mode === 'live' ? 'No entries in the candles the scanner has sent yet.' : 'No complete setups with these settings. Try the 5m chart or loosen the settings.'}</div>`;
   const box = $('#misses');
   box.hidden = !$('#showMisses').checked;
   if (!box.hidden) {
@@ -635,9 +846,28 @@ function renderList() {
       return `<button type="button" class="sig" data-id="${s.id}" aria-current="${s.id === state.selected}">
         <span class="pill" style="--c:${P.muted}">${bull ? 'Buy' : 'Sell'}</span>
         <span>${live ? 'Developing' : 'Stopped'}</span><span></span>
-        <span class="meta">${dt(state.bars[s.sweepAt].t)} · ${live ? 'waiting for the next step' : escapeHtml(s.reason)}</span></button>`;
+        <span class="meta">${dt(state.bars[s.sweepAt].t)} · ${escapeHtml(sideLabel(s))} swept · ${live ? 'waiting for the next step' : escapeHtml(s.reason)}</span></button>`;
     }).join('') : '<div class="empty">None yet.</div>';
   }
+}
+function oddsFor(s, c) {
+  if (state.mode === 'live') return s.odds || null;
+  try { return SP.setupOdds(state.eng, s, c); } catch { return null; }
+}
+function oddsLine(s, c) {
+  const o = oddsFor(s, c);
+  if (!o || !o.n) return '';
+  const r = o.rates, w = o.pWinFromHere;
+  const next = {
+    swept: ['reached CHoCH', r.choch], choch: ['got a volume candle and FVG', r.armed],
+    armed: ['gave an entry', r.entry], entered: ['won', r.win],
+  }[o.stage];
+  const parts = [];
+  if (next && next[1].p !== null && o.stage !== 'entered') parts.push(`${pct(next[1].p)} ${next[0]}`);
+  if (w.p !== null) parts.push(`${pct(w.p)} ended in a win`);
+  if (!parts.length) return '';
+  const scope = o.scope === 'session' && s.session ? ` in the ${SESSION_NAME[s.session]} session` : '';
+  return `<p class="odds">Past ${s.dir === 'bull' ? 'buy' : 'sell'} setups at this step${scope}: ${parts.join(', ')} (n=${w.n.toLocaleString('en-US')}).</p>`;
 }
 function renderDetail() {
   const box = $('#detail'), s = state.byId.get(state.selected), c = state.cursor;
@@ -647,35 +877,47 @@ function renderDetail() {
   const step = (ok, title, text, col) => `<li class="${ok === true ? 'ok' : ok === false ? 'no' : ''}" style="--c:${col}">
     <span class="mk">${ok === true ? '✓' : ok === false ? '✕' : '…'}</span><span><span class="t">${title}</span><br><span class="d">${text}</span></span></li>`;
   const known = k => s[k] !== null && s[k] <= c;
-  const stopped = s.endAt !== null && s.endAt <= c && !(s.entry && s.entry.i <= c);
+  const entered = s.entry && s.entry.i <= c;
+  const stopped = s.endAt !== null && s.endAt <= c && !entered;
   const fail = stopped ? escapeHtml(s.reason) : 'waiting';
+  const lvName = s.label ? `${escapeHtml(s.label)}` : `swing ${bull ? 'low' : 'high'}`;
   const steps = [];
-  steps.push(step(true, 'Liquidity sweep', `${tm(B[s.sweepAt].t)} · wick ${bull ? 'below' : 'above'} the swing ${bull ? 'low' : 'high'} at <span class="num">${fmtP(s.level.price)}</span> from ${tm(B[s.level.i].t)}, closed back ${bull ? 'above' : 'below'}`, P.liq));
+  steps.push(step(true, `Liquidity sweep · ${escapeHtml(sideLabel(s))}`, `${tm(B[s.sweepAt].t)} · wick ${bull ? 'below' : 'above'} the ${lvName} at <span class="num">${fmtP(s.level.price)}</span> from ${tm(B[s.level.i].t)}${s.depthAtr ? ` (${s.depthAtr.toFixed(2)} ATR past it)` : ''}, closed back ${bull ? 'above' : 'below'}`, P.liq));
   steps.push(known('chochAt')
     ? step(true, 'CHoCH', `${tm(B[s.chochAt].t)} · closed ${bull ? 'above' : 'below'} the ${bull ? 'lower high' : 'higher low'} at <span class="num">${fmtP(s.ref.price)}</span>`, P.fg)
     : step(stopped ? false : null, 'CHoCH', fail, P.fg));
   if (known('armedAt')) {
     const z = s.fvgZone, d = s.disp;
     steps.push(step(true, `Volume candle → ${z.kind}`, `${tm(B[d.i].t)} candle${d.volX ? `, volume <span class="num">${d.volX.toFixed(1)}×</span> average` : ''} · ${z.kind} <span class="num">${fmtP(z.bottom)} – ${fmtP(z.top)}</span>`, P.gold));
-    steps.push(step(true, 'Order block', `${tm(B[s.obZone.i].t)} candle · <span class="num">${fmtP(s.obZone.bottom)} – ${fmtP(s.obZone.top)}</span>`, P.ob));
+    const pd = typeof s.obPd === 'number' ? ` · ${pct(s.obPd)} of the way from the sweep to the CHoCH level (${s.obPd <= 0.5 ? (bull ? 'discount' : 'premium') : (bull ? 'premium' : 'discount')})` : '';
+    steps.push(step(true, 'Order block', `${tm(B[s.obZone.i].t)} candle · <span class="num">${fmtP(s.obZone.bottom)} – ${fmtP(s.obZone.top)}</span>${pd}`, P.ob));
   } else if (known('chochAt')) {
     steps.push(step(stopped ? false : null, 'Volume candle → FVG / IFVG', fail, P.gold));
   }
-  if (s.entry && s.entry.i <= c) {
+  if (entered) {
     const e = s.entry;
     steps.push(step(true, `Entry · ${e.pattern}`, `${tm(B[e.i].t)} at the ${e.zone}`, dirCol));
   } else if (known('armedAt')) {
-    steps.push(step(stopped ? false : null, 'Entry pattern', stopped ? fail : (known('touchAt') ? `price reached the zone at ${tm(B[s.touchAt].t)}, waiting for a pin bar or head & shoulders` : 'waiting for price to come back to the zone'), dirCol));
+    steps.push(step(stopped ? false : null, 'Entry pattern', stopped ? fail : (known('touchAt') ? `price reached the zone at ${tm(B[s.touchAt].t)}, waiting for an entry pattern` : 'waiting for price to come back to the zone'), dirCol));
   }
+  const tags = [
+    s.session && `Sweep in ${SESSION_NAME[s.session]}`,
+    s.htfBias !== undefined && `HTF trend ${trendName(s.htfBias)}${s.htfBias ? (s.aligned ? ' (with it)' : ' (against it)') : ''}`,
+  ].filter(Boolean).map(t => `<span class="tag">${t}</span>`).join('');
   let trade = '';
-  if (s.entry && s.entry.i <= c) {
-    const e = s.entry, [res, col] = resultOf(e, c);
+  if (entered) {
+    const e = s.entry, [res, col] = resultOf(e, c), closed = e.exitAt !== null && e.exitAt <= c;
     const cell = (k, v, cc) => `<div class="stat"><small>${k}</small><b${cc ? ` style="color:${cc}"` : ''}>${v}</b></div>`;
-    trade = `<div class="trade">${cell('Entry', fmtP(e.entry))}${cell('Stop', fmtP(e.sl), P.bear)}${cell('Target', fmtP(e.tp), P.bull)}</div>
-      <p class="hint">Result: <b style="color:${col}">${res === 'Open' ? 'still open' : res}</b>${e.exitAt !== null && e.exitAt <= c ? ` at ${dt(B[e.exitAt].t)}` : ''} · risk <span class="num">${fmtP(e.risk)}</span> per ounce</p>`;
+    const spread = state.mode === 'live' ? null : state.opts.spread;
+    const fill = spread ? ` · ${bull ? 'buy fills at the ask (close + spread ' + fmtP(spread) + ')' : 'sell exits at the ask (bid + spread ' + fmtP(spread) + ')'}` : '';
+    const tgt = e.tpSrc && e.tpSrc !== 'rr' ? `Target · ${escapeHtml(e.tpSrc)}` : 'Target';
+    const excursion = closed && typeof e.mfeR === 'number' ? ` · best <span class="num">+${fmtR(e.mfeR)}R</span>, worst <span class="num">−${fmtR(e.maeR)}R</span> along the way` : '';
+    trade = `<div class="trade">${cell('Entry', fmtP(e.entry))}${cell('Stop', fmtP(e.sl), P.bear)}${cell(tgt, fmtP(e.tp), P.bull)}</div>
+      <p class="hint">Result: <b style="color:${col}">${res === 'Open' ? 'still open' : res}</b>${closed ? ` at ${dt(B[e.exitAt].t)}` : ''}${excursion} · risk <span class="num">${fmtP(e.risk)}</span> per ounce, target ${fmtR(e.rr)}R${fill}</p>`;
   }
+  const odds = !entered || !(s.entry.exitAt !== null && s.entry.exitAt <= c) ? oddsLine(s, c) : '';
   box.innerHTML = `<header><b style="color:${dirCol}">${side} setup</b><span class="hint">${dt(B[s.sweepAt].t)} · ${tfName(state.tf)}</span></header>
-    <ol class="steps">${steps.join('')}</ol>${trade}`;
+    ${tags ? `<div class="tags">${tags}</div>` : ''}<ol class="steps">${steps.join('')}</ol>${trade}${odds}`;
 }
 
 function select(id, focus) {
@@ -700,13 +942,18 @@ function fullRender() {
   volume.setData(c === vData.length - 1 ? vData : vData.slice(0, c + 1));
   render();
 }
+function setModeButtons() {
+  for (const b of $('#modeSeg').children) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
+  $('#replayBar').hidden = state.mode !== 'replay';
+  $('#liveBar').hidden = state.mode !== 'live';
+  $('#liveSetNote').hidden = state.mode !== 'live';
+}
 
 // ---------- replay ----------
 let timer = null, audio = null;
 function startReplay(keepCursor) {
   state.mode = 'replay';
-  $('#replayBar').hidden = false;
-  for (const b of $('#modeSeg').children) b.setAttribute('aria-pressed', String(b.dataset.mode === 'replay'));
+  setModeButtons();
   const n = state.bars.length;
   if (!keepCursor || state.cursor >= n - 1) {
     // start a few hundred candles before the latest entry so there is something to watch
@@ -725,8 +972,7 @@ function startReplay(keepCursor) {
 function stopReplay() {
   pause();
   state.mode = 'history';
-  $('#replayBar').hidden = true;
-  for (const b of $('#modeSeg').children) b.setAttribute('aria-pressed', String(b.dataset.mode === 'history'));
+  setModeButtons();
   state.cursor = state.bars.length - 1;
   fullRender();
   selectLatest();
@@ -745,34 +991,44 @@ function step(dir) {
   }
   return true;
 }
+// [colour, title, text, loud] for one step event, or null when it is not worth an alert
+function alertOf(ev, s, bars, all) {
+  const bull = ev.dir === 'bull';
+  if (ev.type === 'entry') {
+    const tgt = ev.tpSrc && ev.tpSrc !== 'rr' ? ` (${ev.tpSrc})` : '';
+    return [bull ? P.bull : P.bear, `${bull ? 'Buy' : 'Sell'} signal · ${ev.pattern} at ${ev.zone}`,
+      `Entry ${fmtP(ev.entry)} · SL ${fmtP(ev.sl)} · TP ${fmtP(ev.tp)}${tgt} · ${tm(bars[ev.at].t)}`, true];
+  }
+  if (!all) return null;
+  if (ev.type === 'sweep') {
+    const name = ev.label ? `${ev.label} ` : '';
+    return [P.liq, `${bull ? 'Sell-side' : 'Buy-side'} liquidity swept`, `${name}${fmtP(ev.price)} · watching for a CHoCH`, false];
+  }
+  if (ev.type === 'choch') return [P.fg, `CHoCH ${bull ? 'up' : 'down'}`, `closed ${bull ? 'above' : 'below'} ${fmtP(ev.price)} · looking for the volume candle`, false];
+  if (ev.type === 'zone' && ev.kind === 'OB' && s) {
+    return [P.ob, `${s.fvgZone.kind} and order block marked`, `OB ${fmtP(ev.bottom)} – ${fmtP(ev.top)} · waiting for the retest`, false];
+  }
+  return null;
+}
 function announce(c) {
   const all = $('#rAlerts').value === 'all';
   for (const ev of state.alertsAt.get(c) || []) {
-    const s = state.byId.get(ev.setupId), bull = ev.dir === 'bull';
-    if (ev.type === 'entry') {
-      toast(bull ? P.bull : P.bear, `${bull ? 'Buy' : 'Sell'} signal · ${ev.pattern} at ${ev.zone}`,
-        `Entry ${fmtP(ev.entry)} · SL ${fmtP(ev.sl)} · TP ${fmtP(ev.tp)} · ${tm(state.bars[c].t)}`, ev.setupId, true);
-    } else if (all && ev.type === 'sweep') {
-      toast(P.liq, `${bull ? 'Sell-side' : 'Buy-side'} liquidity swept`, `${fmtP(ev.price)} · watching for a CHoCH`, ev.setupId);
-    } else if (all && ev.type === 'choch') {
-      toast(P.fg, `CHoCH ${bull ? 'up' : 'down'}`, `closed ${bull ? 'above' : 'below'} ${fmtP(ev.price)} · looking for the volume candle`, ev.setupId);
-    } else if (all && ev.type === 'zone' && ev.kind === 'OB' && s) {
-      toast(P.ob, `${s.fvgZone.kind} and order block marked`, `OB ${fmtP(ev.bottom)} – ${fmtP(ev.top)} · waiting for the retest`, ev.setupId);
-    }
+    const a = alertOf(ev, state.byId.get(ev.setupId), state.bars, all);
+    if (a) toast(a[0], a[1], a[2], ev.setupId, a[3], $('#rSound').checked);
   }
 }
-function toast(col, title, text, setupId, loud) {
+function toast(col, title, text, setupId, loud, sound) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.style.setProperty('--c', col);
   el.innerHTML = `<b>${escapeHtml(title)}</b>${escapeHtml(text)}`;
-  el.addEventListener('click', () => { pause(); select(setupId, true); el.remove(); });
+  el.addEventListener('click', () => { pause(); if (setupId && state.byId.has(setupId)) select(setupId, true); el.remove(); });
   const box = $('#toasts');
   box.prepend(el);
   while (box.children.length > 4) box.lastChild.remove();
   setTimeout(() => el.remove(), loud ? 9000 : 5000);
-  if (loud && $('#rSound').checked) beep();
-  if (loud) state.selected = setupId;
+  if (loud && sound) beep();
+  if (loud && setupId) state.selected = setupId;
 }
 function beep() {
   try {
@@ -823,74 +1079,280 @@ function renderProgress() {
   $('#rProg').textContent = `${dt(state.bars[c].t)} · candle ${(c + 1).toLocaleString('en-US')} of ${n.toLocaleString('en-US')}`;
 }
 
+// ---------- live (page served by live/runner.js) ----------
+const POLL_MS = (() => {
+  const m = /[?&]poll=(\d+)/.exec(location.search || '');
+  return m ? Math.max(1, +m[1]) * 1000 : 20000;
+})();
+const SOURCE_NAME = { mt5: 'MT5', twelvedata: 'Twelve Data', csv: 'CSV file', replay: 'replay of the sample (demo, not live prices)' };
+let liveTimer = null, liveSeen = null;
+async function fetchState() {
+  const r = await fetch('api/state', { cache: 'no-store' });
+  if (!r.ok) throw new Error(`the scanner answered ${r.status}`);
+  const j = await r.json();
+  if (!j || typeof j !== 'object' || !j.timeframes) throw new Error('the scanner sent something unexpected');
+  return j;
+}
+async function probeLive() {
+  try {
+    state.liveData = await fetchState();
+    $('#liveBtn').hidden = false;
+  } catch {}
+}
+function startLive() {
+  pause();
+  state.mode = 'live';
+  trainId++;          // drop any training in flight
+  state.wf = null;
+  state.selected = null;
+  state.liveTf = null;
+  state.liveShown = null;
+  liveSeen = null;
+  setModeButtons();
+  $('#src').innerHTML = 'Live scanner';
+  if (state.liveData) onLiveData(state.liveData);
+  pollLive();
+  clearInterval(liveTimer);
+  liveTimer = setInterval(pollLive, POLL_MS);
+}
+function leaveLive() {
+  clearInterval(liveTimer);
+  liveTimer = null;
+  state.mode = 'history';
+  state.liveTf = null;
+  setModeButtons();
+  $('#src').innerHTML = state.baseSrc || '';
+  const options = baseTfs();
+  setTf(options.includes(state.tf) ? state.tf : options[0]);
+}
+async function pollLive() {
+  let j;
+  try { j = await fetchState(); } catch (e) {
+    if (state.mode === 'live') setStatus(`Can't reach the scanner (${e.message}). Is live/runner.js still running? Showing the last data.`, true);
+    return;
+  }
+  if (state.mode !== 'live') return;
+  onLiveData(j);
+}
+function onLiveData(j) {
+  state.liveData = j;
+  const tfs = Object.keys(j.timeframes).map(m => +m * 60).sort((a, b) => a - b);
+  if (tfs.length && !tfs.includes(state.tf)) state.tf = tfs[0];
+  tfButtons(tfs);
+  applyLiveTf(false);
+  liveAlerts(j);
+  liveStatus(j);
+}
+function applyLiveTf(tfChanged) {
+  const j = state.liveData, T = j && j.timeframes[String(state.tf / 60)];
+  for (const b of $('#tfSeg').children) b.setAttribute('aria-pressed', String(+b.dataset.tf === state.tf));
+  if (!T) {
+    state.liveTf = null;
+    state.bars = [];
+    state.eng = { bars: [], setups: [], events: [] };
+    indexEngine();
+    buildSeriesData();
+    state.cursor = 0;
+    candles.setData([]); volume.setData([]);
+    render();
+    return;
+  }
+  const first = state.liveShown !== state.tf || tfChanged;
+  const lastT = T.bars.length ? T.bars[T.bars.length - 1].t : null;
+  if (!first && state.liveStamp === j.updatedAt) return;
+  state.liveStamp = j.updatedAt;
+  // keep following new candles if the chart was showing the latest one
+  const vr = chart.timeScale().getVisibleLogicalRange();
+  const following = first || !vr || vr.to >= state.bars.length - 2;
+  state.liveTf = T;
+  state.liveShown = state.tf;
+  state.bars = T.bars;
+  state.eng = { bars: T.bars, setups: T.setups, events: T.liq.concat(T.events), summary: () => T.summary };
+  indexEngine();
+  buildSeriesData();
+  state.cursor = Math.max(0, state.bars.length - 1);
+  if (state.selected !== null && !state.byId.has(state.selected)) state.selected = null;
+  fullRender();
+  if (first && lastT !== null && state.selected === null) selectLatest();
+  if (following) showLatest();
+}
+// jump (no animation, which a poll could interrupt) so the newest candle sits at the right edge
+function showLatest() {
+  const ts = chart.timeScale(), r = ts.getVisibleLogicalRange(), n = state.bars.length;
+  const w = r ? Math.max(40, Math.min(r.to - r.from, 400)) : 140, right = n - 1 + ts.options().rightOffset;
+  ts.setVisibleLogicalRange({ from: right - w, to: right });
+}
+function liveAlerts(j) {
+  const seeding = liveSeen === null, all = $('#lAlerts').value === 'all';
+  if (seeding) liveSeen = new Set();
+  for (const [m, T] of Object.entries(j.timeframes)) {
+    const byId = new Map(T.setups.map(s => [s.id, s]));
+    for (const ev of T.events) {
+      const bar = T.bars[ev.at];
+      if (!bar || !['entry', 'sweep', 'choch', 'zone'].includes(ev.type)) continue;
+      const key = `${m}:${ev.setupId}:${ev.type}:${ev.kind || ''}:${bar.t}`;
+      if (liveSeen.has(key)) continue;
+      liveSeen.add(key);
+      if (seeding) continue;   // history already on the chart when the page opened
+      const a = alertOf(ev, byId.get(ev.setupId), T.bars, all);
+      if (!a) continue;
+      const title = `${m}m ${a[1]}`;
+      const sameTf = +m * 60 === state.tf;
+      toast(a[0], title, a[2], sameTf ? ev.setupId : null, a[3], $('#lSound').checked);
+      if (a[3]) notify(title, a[2]);
+    }
+  }
+  if (state.mode === 'live') render();
+}
+function notify(title, body) {
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') new Notification(`XAUUSD ${title}`, { body });
+  } catch {}
+}
+function notifyButton() {
+  const b = $('#lNotify');
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  b.textContent = perm === 'granted' ? 'Desktop alerts on' : perm === 'denied' ? 'Desktop alerts blocked' : perm === 'unsupported' ? 'No desktop alerts here' : 'Enable desktop alerts';
+  b.disabled = perm !== 'default';
+}
+function setStatus(text, bad) {
+  const el = $('#lStatus');
+  el.classList.toggle('bad', !!bad);
+  el.innerHTML = `<span class="dot"></span>${escapeHtml(text)}`;
+}
+function liveStatus(j) {
+  const h = j.health || {}, src = SOURCE_NAME[j.source] || j.source || 'unknown';
+  const clock = iso => (iso ? tm(Date.parse(iso) / 1000) : null);
+  const next = clock(j.nextRunAt);
+  if (h.ok === false || !j.updatedAt) {
+    const why = h.error ? `Last check failed: ${h.error}` : 'Waiting for the first check';
+    setStatus(`${why}.${j.updatedAt ? ` Showing data from ${clock(j.updatedAt)}.` : ''}${next ? ` Next try ${next}.` : ''} Source ${src}`, true);
+    return;
+  }
+  const T = state.liveTf;
+  const last = T && T.bars.length ? ` · last candle ${tm(T.bars[T.bars.length - 1].t)}` : '';
+  setStatus(`Updated ${clock(j.updatedAt)}${next ? ` · next check ${next}` : ''}${last} · source ${src}`, false);
+}
+
 // ---------- settings + rules ----------
+// [type, key, label, ...]: num (min, max, step), sel (options), chk; keys may be 'patterns.pin', 'liqSources.equal' or 'kz.london'
 const FIELDS = [
-  ['Liquidity and structure', [
-    ['liqLen', 'Swing size for liquidity (candles each side)', 2, 30, 1],
-    ['structLen', 'Swing size for the CHoCH level', 1, 10, 1],
-    ['chochWithin', 'CHoCH must come within (candles)', 5, 120, 1],
+  ['Liquidity', [
+    ['chk', 'liqSources.swing', 'Swing highs and lows'],
+    ['chk', 'liqSources.equal', 'Equal highs / lows (EQH / EQL)'],
+    ['chk', 'liqSources.prevDay', 'Previous day high / low (PDH / PDL)'],
+    ['chk', 'liqSources.session', 'Asia, London and NY session highs / lows'],
+    ['num', 'liqLen', 'Swing size for liquidity (candles each side)', 2, 30, 1],
+    ['num', 'eqTolAtr', 'Equal if within (× ATR)', 0, 1, 0.05],
+    ['num', 'keyLevelDays', 'Day and session levels stay for (days)', 1, 10, 1],
+    ['num', 'minSweepAtr', 'Wick past the level at least (× ATR)', 0, 2, 0.05],
   ]],
-  ['Volume candle', [
-    ['dispBodyAtr', 'Body at least (× ATR 14)', 0.3, 4, 0.1],
-    ['dispBodyPct', 'Body at least (share of candle)', 0.3, 0.95, 0.05],
-    ['dispVolMult', 'Volume at least (× 20-candle average)', 1, 5, 0.1],
-    ['fvgWait', 'FVG can finish up to (candles after CHoCH)', 0, 10, 1],
+  ['Filters', [
+    ['note', 'Only take sweeps in these sessions (none ticked = any time). New York time.'],
+    ['chk', 'kz.asia', 'Asia (20:00–00:00)'],
+    ['chk', 'kz.london', 'London (02:00–05:00)'],
+    ['chk', 'kz.ny', 'New York (07:00–10:00)'],
+    ['sel', 'htfMinutes', 'Higher timeframe for the trend', [[0, 'Off'], [60, '1 hour'], [240, '4 hours']]],
+    ['chk', 'htfFilter', 'Only trade with the higher-timeframe trend'],
+    ['chk', 'requireDiscount', 'Buy OB in discount, sell OB in premium'],
+  ]],
+  ['Structure and volume candle', [
+    ['num', 'structLen', 'Swing size for the CHoCH level', 1, 10, 1],
+    ['num', 'chochWithin', 'CHoCH must come within (candles)', 5, 120, 1],
+    ['num', 'dispBodyAtr', 'Body at least (× ATR 14)', 0.3, 4, 0.1],
+    ['num', 'dispBodyPct', 'Body at least (share of candle)', 0.3, 0.95, 0.05],
+    ['num', 'dispVolMult', 'Volume at least (× 20-candle average)', 1, 5, 0.1],
+    ['num', 'fvgWait', 'FVG can finish up to (candles after CHoCH)', 0, 10, 1],
   ]],
   ['Entry', [
-    ['entryZone', 'Wait for price at', 'select', [['ob', 'Order block'], ['fvg', 'FVG / IFVG'], ['either', 'Either one']]],
-    ['pin', 'Pin bar', 'check'],
-    ['hs', 'Head & shoulders (3 candles)', 'check'],
-    ['pinWick', 'Pin wick at least (× body)', 1, 6, 0.5],
-    ['entryWithin', 'Entry must come within (candles after CHoCH)', 5, 200, 1],
+    ['sel', 'entryZone', 'Wait for price at', [['ob', 'Order block'], ['fvg', 'FVG / IFVG'], ['either', 'Either one']]],
+    ['chk', 'patterns.pin', 'Pin bar'],
+    ['chk', 'patterns.hs', 'Head & shoulders (3 candles)'],
+    ['chk', 'patterns.threePins', 'Three pins in a row'],
+    ['chk', 'patterns.engulf', 'Engulfing candle'],
+    ['num', 'pinWick', 'Pin wick at least (× body)', 1, 6, 0.5],
+    ['chk', 'firstTouchOnly', 'Only the first touch of the zone'],
+    ['num', 'entryWithin', 'Entry must come within (candles after CHoCH)', 5, 200, 1],
   ]],
   ['Trade', [
-    ['slBufferAtr', 'Stop buffer beyond the OB (× ATR)', 0, 2, 0.05],
-    ['rr', 'Target (× risk)', 0.5, 10, 0.5],
+    ['sel', 'slMode', 'Stop goes beyond', [['ob', 'The order block'], ['sweep', 'The sweep wick']]],
+    ['num', 'slBufferAtr', 'Stop buffer (× ATR)', 0, 2, 0.05],
+    ['sel', 'tpMode', 'Target', [['rr', 'Fixed R multiple'], ['liquidity', 'Next liquidity level']]],
+    ['num', 'rr', 'Fixed target (× risk)', 0.5, 10, 0.5],
+    ['num', 'minRR', 'Liquidity target at least (× risk)', 0.5, 10, 0.5],
+    ['num', 'spread', 'Spread (price, e.g. 0.25)', 0, 5, 0.01],
   ]],
 ];
+const fid = k => 'opt-' + k.replace('.', '-');
+function getOpt(o, k) {
+  const [a, b] = k.split('.');
+  if (a === 'kz') return o.killzones.includes(b);
+  return b ? o[a][b] : o[a];
+}
+function setOpt(o, k, v) {
+  const [a, b] = k.split('.');
+  if (a === 'kz') o.killzones = v ? [...new Set([...o.killzones, b])] : o.killzones.filter(x => x !== b);
+  else if (b) o[a][b] = v;
+  else o[a] = v;
+}
 function buildSettings() {
   const o = state.opts;
-  $('#settings').innerHTML = FIELDS.map(([title, fields]) => `<fieldset><legend>${title}</legend>${fields.map(([k, label, a, b, stepV]) => {
-    if (a === 'select') return `<label class="field">${label}<select id="opt-${k}">${b.map(([v, t]) => `<option value="${v}"${o[k] === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`;
-    if (a === 'check') return `<label class="check"><input type="checkbox" id="opt-${k}"${o.patterns[k] ? ' checked' : ''}> ${label}</label>`;
-    return `<label class="field">${label}<input type="number" id="opt-${k}" min="${a}" max="${b}" step="${stepV}" value="${o[k]}"></label>`;
+  $('#settings').innerHTML = FIELDS.map(([title, fields]) => `<fieldset><legend>${title}</legend>${fields.map(([type, k, label, a, b, stepV]) => {
+    if (type === 'note') return `<p class="hint">${k}</p>`;
+    const v = getOpt(o, k);
+    if (type === 'sel') return `<label class="field">${label}<select id="${fid(k)}">${a.map(([x, t]) => `<option value="${x}"${String(v) === String(x) ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`;
+    if (type === 'chk') return `<label class="check"><input type="checkbox" id="${fid(k)}"${v ? ' checked' : ''}> ${label}</label>`;
+    return `<label class="field">${label}<input type="number" id="${fid(k)}" min="${a}" max="${b}" step="${stepV}" value="${v}"></label>`;
   }).join('')}</fieldset>`).join('');
 }
 let settingsTimer = null;
 function readSettings() {
-  const o = { ...state.opts, patterns: { ...state.opts.patterns } };
+  const o = withPreset(state.opts);
   for (const [, fields] of FIELDS) {
-    for (const [k, , a, b] of fields) {
-      const el = $(`#opt-${k}`);
-      if (a === 'check') o.patterns[k] = el.checked;
-      else if (a === 'select') o[k] = el.value;
+    for (const [type, k, , a, b] of fields) {
+      if (type === 'note') continue;
+      const el = $('#' + fid(k));
+      if (type === 'chk') setOpt(o, k, el.checked);
+      else if (type === 'sel') setOpt(o, k, typeof a[0][0] === 'number' ? +el.value : el.value);
       else {
         const v = parseFloat(el.value);
-        if (Number.isFinite(v)) o[k] = Math.min(b, Math.max(a, v));
+        if (Number.isFinite(v)) setOpt(o, k, Math.min(b, Math.max(a, v)));
       }
     }
   }
   state.opts = o;
   store.set('opts', o);
+  renderRules();
+  if (state.mode === 'live') return;   // applies when leaving Live
   const keep = state.selected;
   runEngine();
   state.selected = state.byId.has(keep) ? keep : null;
   if (state.mode === 'history') { render(); if (!state.selected) selectLatest(); }
   else render();
-  renderRules();
 }
 function renderRules() {
   const o = state.opts, v = x => `<span class="v">${x}</span>`;
   const zone = { ob: 'order block', fvg: 'FVG / IFVG', either: 'FVG / IFVG or the order block' }[o.entryZone];
   const pats = [o.patterns.pin && `a <b>pin bar</b> (rejection wick at least ${v(o.pinWick + '×')} the body and at least half the candle)`,
-    o.patterns.hs && `a <b>head & shoulders</b> (three candles, the middle one reaches deepest into the zone, the third closes back past the middle candle's body)`].filter(Boolean);
+    o.patterns.hs && `a <b>head & shoulders</b> (three candles, the middle one reaches deepest into the zone, the third closes back past the middle candle's body)`,
+    o.patterns.threePins && `<b>three pins</b> (three rejection candles in a row)`,
+    o.patterns.engulf && `an <b>engulfing</b> candle (its body covers the previous opposite candle's body)`].filter(Boolean);
+  const src = o.liqSources, srcs = [src.swing && `swing highs and lows (${v(o.liqLen)} candles each side)`,
+    src.equal && `equal highs / lows (EQH / EQL, within ${v(o.eqTolAtr + '× ATR')})`, src.prevDay && 'the previous day high and low (PDH / PDL, the day starts 17:00 New York)',
+    src.session && 'the Asia, London and New York session highs and lows'].filter(Boolean);
+  const kz = o.killzones.length ? `Only sweeps during ${o.killzones.map(k => v(SESSION_NAME[k])).join(', ')} count.` : 'Sweeps count at any time of day.';
+  const htf = o.htfMinutes ? `The ${v(tfName(o.htfMinutes * 60))} trend comes from its last swing high and low (${v(o.htfLen)} candles each side): a close above the swing high makes it up, below the swing low down. ${o.htfFilter ? 'Setups against that trend are <b>dropped</b>.' : 'It is shown on every setup but does not filter.'}` : 'The higher-timeframe trend is switched off.';
+  const tgt = o.tpMode === 'rr' ? `Target ${v(o.rr + 'R')}.` : `Target the nearest opposite liquidity level that pays at least ${v(o.minRR + 'R')}; if none does, ${v(o.rr + 'R')}.`;
   $('#rules').innerHTML = [
-    `<b>Liquidity sweep.</b> A swing low needs ${v(o.liqLen)} candles on each side with higher lows. A candle that wicks below it and closes back above it has swept the sell-side liquidity. A close below it is a breakdown, not a sweep. Sells mirror this at swing highs.`,
-    `<b>CHoCH.</b> Within ${v(o.chochWithin)} candles, a candle closes above the last swing high (${v(o.structLen)} candles each side) that formed before the sweep. If a candle closes back below the swept low first, the setup is dropped.`,
-    `<b>Volume candle → FVG / IFVG.</b> Between the sweep and ${v(o.fvgWait)} candles after the CHoCH, a candle in the new direction with a body of at least ${v(o.dispBodyAtr + '× ATR')} and ${v(Math.round(o.dispBodyPct * 100) + '%')} of its range, and volume at least ${v(o.dispVolMult + '×')} the average of the previous 20 candles. It has to leave a fair value gap (the candles on either side don't overlap) or close through an older opposite gap, which makes that gap an IFVG.`,
-    `<b>Order block.</b> The last opposite-coloured candle before the volume candle, from its high to its low.`,
-    `<b>Entry.</b> Within ${v(o.entryWithin)} candles of the CHoCH, price comes back to the ${zone} and prints ${pats.length ? pats.join(' or ') : 'nothing (both patterns are switched off)'}. A close beyond the order block cancels the setup.`,
-    `<b>Trade.</b> Entry at the close of the pattern candle. Stop ${v(o.slBufferAtr + '× ATR')} beyond the order block or the pattern's wick, whichever is further. Target ${v(o.rr + 'R')}. A candle that touches both stop and target counts as a loss.`,
+    `<b>Liquidity.</b> Levels come from ${srcs.length ? srcs.join(', ') : 'nothing (all sources are switched off)'}. Day and session levels stay active for ${v(o.keyLevelDays)} trading days. Levels that sit within ${v(o.eqTolAtr + '× ATR')} of each other are treated as one pool, named after the strongest.`,
+    `<b>Liquidity sweep.</b> A candle wicks through a level${o.minSweepAtr ? ` by at least ${v(o.minSweepAtr + '× ATR')}` : ''} and closes back inside. A close beyond it is a breakdown, not a sweep. ${kz}`,
+    `<b>CHoCH.</b> Within ${v(o.chochWithin)} candles, a candle closes beyond the last opposite structure swing (${v(o.structLen)} candles each side) that formed before the sweep. A close back beyond the sweep extreme first drops the setup.`,
+    `<b>Higher-timeframe trend.</b> ${htf}`,
+    `<b>Volume candle → FVG / IFVG.</b> Between the sweep and ${v(o.fvgWait)} candles after the CHoCH, a candle in the new direction with a body of at least ${v(o.dispBodyAtr + '× ATR')} and ${v(Math.round(o.dispBodyPct * 100) + '%')} of its range, and volume at least ${v(o.dispVolMult + '×')} the average of the previous 20 candles. It has to leave a fair value gap or close through an older opposite gap, which makes that gap an IFVG.`,
+    `<b>Order block.</b> The last opposite-coloured candle before the volume candle, from its high to its low.${o.requireDiscount ? ' A buy OB must sit in the lower half (discount) of the move from the sweep to the CHoCH level; a sell OB in the upper half (premium).' : ''}`,
+    `<b>Entry.</b> Within ${v(o.entryWithin)} candles of the CHoCH, price comes back to the ${zone} and prints ${pats.length ? pats.join(' or ') : 'nothing (all patterns are switched off)'}.${o.firstTouchOnly ? ' The pattern has to include the <b>first</b> candle that touches the zone.' : ''} A close beyond the order block cancels the setup.`,
+    `<b>Trade.</b> Buys fill at the ask: the close plus a spread of ${v(fmtP(o.spread))}; sells fill at the close and exit when the ask reaches the stop or target. Stop ${v(o.slBufferAtr + '× ATR')} beyond ${o.slMode === 'sweep' ? 'the sweep wick' : "the order block or the pattern's wick, whichever is further"}. ${tgt} A candle that touches both stop and target counts as a loss.`,
+    `<b>Next move.</b> A model trained on this data's own history scores how often, from candles like this one, price went up over the next hours and which side's liquidity was taken first. It is only tested on candles it never saw, and the card says how often it was right.`,
     `<b>No peeking.</b> Each mark appears on the candle where it became known, so replay shows exactly what you would have seen live.`,
   ].map(x => `<li>${x}</li>`).join('');
 }
@@ -911,12 +1373,16 @@ $('#layers').addEventListener('click', ev => {
 });
 $('#tfSeg').addEventListener('click', ev => {
   const b = ev.target.closest('[data-tf]');
-  if (b && +b.dataset.tf !== state.tf) { pause(); setTf(+b.dataset.tf); }
+  if (b && +b.dataset.tf !== state.tf) { pause(); state.selected = null; setTf(+b.dataset.tf); }
 });
 $('#modeSeg').addEventListener('click', ev => {
   const b = ev.target.closest('[data-mode]');
   if (!b || b.dataset.mode === state.mode) return;
-  if (b.dataset.mode === 'replay') startReplay(false); else stopReplay();
+  const to = b.dataset.mode;
+  if (to === 'live') { startLive(); return; }
+  if (state.mode === 'live') leaveLive();
+  if (to === 'replay') startReplay(false);
+  else if (state.mode !== 'history') stopReplay();
 });
 $('#tz').value = state.tz;
 $('#tz').addEventListener('change', () => {
@@ -925,6 +1391,7 @@ $('#tz').addEventListener('change', () => {
   makeFormatters();
   chart.applyOptions({ timeScale: { tickMarkFormatter: TICK }, localization: { timeFormatter: t => dt(t) } });
   render();
+  if (state.mode === 'live' && state.liveData) liveStatus(state.liveData);
 });
 for (const id of ['#list', '#misses']) {
   $(id).addEventListener('click', ev => {
@@ -943,7 +1410,7 @@ for (const tab of document.querySelectorAll('[role="tab"]')) {
 }
 $('#settings').addEventListener('input', () => { clearTimeout(settingsTimer); settingsTimer = setTimeout(readSettings, 250); });
 $('#resetBtn').addEventListener('click', () => {
-  state.opts = { ...SMC.DEFAULTS, patterns: { ...SMC.DEFAULTS.patterns } };
+  state.opts = withPreset({});
   buildSettings();
   readSettings();
 });
@@ -962,6 +1429,16 @@ $('#replayFrom').addEventListener('change', () => {
   fullRender();
   chart.timeScale().scrollToRealTime();
 });
+$('#lNotify').addEventListener('click', async () => {
+  if (!('Notification' in window)) return;
+  try { await Notification.requestPermission(); } catch {}
+  notifyButton();
+});
+$('#lSound').addEventListener('change', () => {
+  // a click is the gesture browsers need before sound can play later
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === 'suspended') audio.resume(); } catch {}
+});
+notifyButton();
 document.addEventListener('keydown', ev => {
   if (state.mode !== 'replay' || ev.target.closest('input, select, textarea')) return;
   if (ev.key === ' ') { ev.preventDefault(); state.playing ? pause() : play(); }
@@ -971,6 +1448,11 @@ document.addEventListener('keydown', ev => {
 chart.subscribeCrosshairMove(p => legendFor(p && p.logical !== undefined ? Math.round(p.logical) : state.cursor));
 
 $('#loadBtn').addEventListener('click', () => { $('#loader').hidden = !$('#loader').hidden; });
+function leaveOtherModes() {
+  pause();
+  if (state.mode === 'live') leaveLive();
+  if (state.mode === 'replay') stopReplay();
+}
 $('#file').addEventListener('change', () => {
   const f = $('#file').files[0];
   if (!f) return;
@@ -980,8 +1462,7 @@ $('#file').addEventListener('change', () => {
     try {
       const bars = SMC.parseCSV(String(r.result), +$('#fileTz').value);
       if (bars.length < 200) throw new Error(`Only ${bars.length} candles found. Load at least a few days of data.`);
-      pause();
-      if (state.mode === 'replay') stopReplay();
+      leaveOtherModes();
       setBase(bars, { source: f.name });
       err.hidden = true;
       $('#loader').hidden = true;
@@ -992,7 +1473,7 @@ $('#file').addEventListener('change', () => {
   };
   r.readAsText(f);
 });
-$('#sampleBtn').addEventListener('click', () => { pause(); if (state.mode === 'replay') stopReplay(); loadSample(); $('#loader').hidden = true; });
+$('#sampleBtn').addEventListener('click', () => { leaveOtherModes(); loadSample(); $('#loader').hidden = true; });
 
 function onTheme() {
   applyTheme();
@@ -1011,5 +1492,6 @@ function loadSample() {
 buildSettings();
 renderRules();
 loadSample();
+probeLive();
 })();
 </script>
