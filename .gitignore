@@ -1,0 +1,12 @@
+# Trading skill outputs: reports, trade journal and thesis state.
+# This repo is public, so keep positions and P&L out of git.
+reports/
+state/
+
+# Secrets
+.env
+.env.*
+
+__pycache__/
+*.pyc
+.venv/

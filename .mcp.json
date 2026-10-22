@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "meta-trader-mcp": {
+      "command": "uvx",
+      "args": [
+        "--from", "${MTM_PACKAGE:-meta-trader-mcp[windows]==1.2.2}",
+        "--with", "mcp<2",
+        "meta-trader-mcp", "serve", "--transport", "stdio"
+      ],
+      "env": {
+        "MTM_MODE": "${MTM_MODE:-auto}",
+        "MTM_ENABLE_TRADING": "${MTM_ENABLE_TRADING:-false}",
+        "MTM_ENABLE_EXEC": "false",
+        "MTM_MAX_LOT": "${MTM_MAX_LOT:-0.1}",
+        "MTM_MAX_DRAWDOWN_PCT": "${MTM_MAX_DRAWDOWN_PCT:-5.0}",
+        "MT5_LOGIN": "${MT5_LOGIN:-}",
+        "MT5_SERVER": "${MT5_SERVER:-}",
+        "MT5_PASSWORD": "${MT5_PASSWORD:-}",
+        "MT5_TERMINAL_PATH": "${MT5_TERMINAL_PATH:-}"
+      }
+    }
+  }
+}
