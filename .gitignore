@@ -11,3 +11,4 @@ __pycache__/
 *.pyc
 .venv/
 smc-scanner/live/config.json
+*.zip
