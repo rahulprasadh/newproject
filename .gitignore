@@ -11,4 +11,7 @@ __pycache__/
 *.pyc
 .venv/
 smc-scanner/live/config.json
+smc-scanner/live/config.broken.json
+# the private Node.js copy start.bat downloads
+smc-scanner/runtime/
 *.zip

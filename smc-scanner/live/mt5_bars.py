@@ -3,6 +3,10 @@
 Usage:
   python mt5_bars.py --symbol XAUUSD --timeframe M5 --count 5000 [--offset auto|180]
                      [--fallback-offset 180] [--terminal "C:\\Program Files\\MetaTrader 5\\terminal64.exe"]
+                     [--find-symbol]
+
+With --find-symbol, a symbol the broker does not have is looked up among its symbols:
+XAUUSD.m, XAUUSDm, XAUUSD+ or GOLD all count as XAUUSD. The name used is in "symbol".
 
 Prints one line: {"bars": [{"t", "o", "h", "l", "c", "v"}], "serverOffsetMinutes": 180,
 "offsetSource": "auto"|"config"|"fallback", "now": <UTC seconds>, "tickFresh": true, "error": null}
@@ -55,6 +59,9 @@ class FakeMT5:
     def symbol_select(self, symbol, enable=True):
         return symbol in self.spec.get("symbols", [symbol])
 
+    def symbols_get(self):
+        return [types.SimpleNamespace(name=n) for n in self.spec.get("symbols", [])]
+
     def symbol_info_tick(self, symbol):
         if not self.ticks:
             return None
@@ -99,6 +106,25 @@ def err_text(mt5):
         return "no details"
 
 
+def find_symbol(mt5, wanted):
+    """The broker's name for a symbol: XAUUSD.m, XAUUSDm, XAUUSD+ ... or GOLD for XAUUSD."""
+    try:
+        names = [s.name for s in (mt5.symbols_get() or [])]
+    except Exception:
+        return None
+    w = wanted.upper()
+    aliases = [w] + (["GOLD"] if w.startswith("XAUUSD") else [])
+    best = None
+    for n in names:
+        u = n.upper()
+        for rank, a in enumerate(aliases):
+            if u == a or (u.startswith(a) and not u[len(a):len(a) + 1].isalpha()) or u.startswith(a + "M"):
+                key = (rank, len(u))
+                if best is None or key < best[0]:
+                    best = (key, n)
+    return best[1] if best else None
+
+
 def tick_ms(tick):
     msc = getattr(tick, "time_msc", None)
     return msc if msc else int(tick.time) * 1000
@@ -133,6 +159,7 @@ def main(argv=None):
     p.add_argument("--offset", default="auto", help="'auto' or the server's offset from UTC in minutes")
     p.add_argument("--fallback-offset", type=int, default=None)
     p.add_argument("--terminal", default=None, help="path to terminal64.exe when several are installed")
+    p.add_argument("--find-symbol", action="store_true", help="look up the broker's name when the symbol is missing")
     a = p.parse_args(argv)
 
     out = {"bars": [], "serverOffsetMinutes": None, "offsetSource": None, "now": None,
@@ -149,8 +176,12 @@ def main(argv=None):
             raise Fail("MetaTrader 5 is open but not connected to the broker. Check the login and "
                        "the internet connection in the terminal.")
         if not mt5.symbol_select(a.symbol, True):
-            raise Fail("Symbol {} was not found. Use the exact name from MT5's Market Watch "
-                       "(for example XAUUSD, XAUUSD.m or GOLD) in mt5.symbol.".format(a.symbol))
+            other = find_symbol(mt5, a.symbol) if a.find_symbol else None
+            if not other or not mt5.symbol_select(other, True):
+                raise Fail("Symbol {} was not found. Use the exact name from MT5's Market Watch "
+                           "(for example XAUUSD, XAUUSD.m or GOLD) in mt5.symbol.".format(a.symbol))
+            a.symbol = other
+            out["symbol"] = other
 
         measured, tick = measure_offset(mt5, a.symbol, clock, sleep)
         fresh = measured is not None

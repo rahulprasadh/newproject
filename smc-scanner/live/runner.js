@@ -8,21 +8,28 @@
  *   5. retrains the next-move forecaster on the growing history every 12 new candles
  *   6. forecasts from the latest candle, saves latest-<SYMBOL>.json and serves a local dashboard
  *
- * node smc-scanner/live/runner.js [--config FILE] [--source mt5|twelvedata|csv|replay]
- *   [--symbol XAUUSD] [--timeframes 5,15] [--every 5] [--port 8787] [--once]
+ * node smc-scanner/live/runner.js [--config FILE] [--source auto|mt5file|mt5|twelvedata|yahoo|csv|replay]
+ *   [--symbol XAUUSD] [--timeframes 5,15] [--every 5] [--port 8787] [--once] [--open]
  */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const { spawn } = require('node:child_process');
 const SMC = require('../engine.js');
 const P = require('../predict.js');
 const sources = require('./sources.js');
 const alerts = require('./alerts.js');
+const { createNews, NEWS_DEFAULTS } = require('./news.js');
+const { request } = require('./http.js');
 
 const ROOT = path.resolve(__dirname, '..');          // the smc-scanner folder the dashboard serves
 const DATA_DIR = path.join(__dirname, 'data');
 const DEFAULT_CONFIG = path.join(__dirname, 'config.json');
+const VENDOR_LWC = path.join(ROOT, 'vendor', 'lightweight-charts.standalone.production.js');
+const CDN_LWC = /https:\/\/cdn\.jsdelivr\.net\/npm\/lightweight-charts@[\d.]+\/dist\/lightweight-charts\.standalone\.production\.js/;
+const LOG_MAX = 2 * 1024 * 1024;  // scanner.log is rolled over to scanner.log.1 at this size
+const MASK = '••••••';             // what /api/config shows instead of a saved secret
 const RETRAIN_EVERY = 12;      // new candles between forecaster retrains
 const REVISE_BARS = 3;         // the newest saved candles a fetch may still correct
 const GRACE_SEC = 8;           // runs start this long after a candle closes
@@ -35,31 +42,45 @@ const WINDOW = 1500;           // candles per timeframe sent to the dashboard
 const MIN_ROWS = 900;          // forecaster training rows needed before it is trained at all
 
 const DEFAULTS = {
-  source: 'mt5',
+  source: 'auto',
   symbol: 'XAUUSD',
   timeZone: 'Asia/Kolkata',
   everyMinutes: 5,
   timeframes: [5, 15],
   port: 8787,
   historyCandles: 50000,
-  mt5: { python: '', pythonArgs: [], symbol: 'XAUUSD', serverUtcOffsetMinutes: 'auto', fallbackOffsetMinutes: null, terminalPath: '' },
+  marketHours: true,
+  mt5file: { folder: '', path: '', symbol: '', maxStatusAgeSeconds: 180, dst: 'auto' },
+  mt5: {
+    python: '', pythonArgs: [], symbol: 'XAUUSD', serverUtcOffsetMinutes: 'auto', fallbackOffsetMinutes: null,
+    terminalPath: '', dst: 'auto', findSymbol: true,
+  },
   twelvedata: { apiKey: '', symbol: 'XAU/USD', maxCandles: 20000, base: '' },
+  yahoo: { symbol: 'GC=F', base: '' },
   csv: { path: '', tzOffsetMinutes: 0 },
   replay: { startIndex: null, start: '', stepMinutes: null, path: '' },
   alerts: {
-    on: 'entry', console: true, bell: true, results: true, maxAgeMinutes: 30,
+    on: 'entry', console: true, bell: true, results: true, maxAgeMinutes: 30, minGrade: 'C',
     telegram: { botToken: '', chatId: '', base: '' },
   },
+  risk: { balance: 0, percent: 1, currency: 'USD', usdRate: 1, contractSize: 100, minLot: 0.01, lotStep: 0.01 },
+  news: { ...NEWS_DEFAULTS },
   engine: { spread: 0.25 },
   predict: {},
 };
+
+// Settings that hold secrets: /api/config shows MASK instead, and MASK sent back keeps the saved value.
+const SECRETS = [['twelvedata', 'apiKey'], ['alerts', 'telegram', 'botToken']];
 
 const USAGE = `Gold SMC Scanner, live
 
   node smc-scanner/live/runner.js [options]
 
   --config FILE        settings file (default: live/config.json when it exists)
-  --source NAME        mt5, twelvedata, csv or replay (replay = the bundled sample, for a demo)
+  --source NAME        auto (default: the first that works of mt5file, mt5, twelvedata, yahoo),
+                       mt5file (MT5 through the GoldSMCExport expert), mt5 (MT5 through Python),
+                       twelvedata, yahoo (free, gold futures, ~10 min late), csv,
+                       or replay (the bundled sample, a demo)
   --symbol NAME        name used in alerts and data files (default XAUUSD)
   --timeframes 5,15    timeframes to scan; the smallest is fetched, the others are built from it
   --every 5            minutes between checks (5 to 15)
@@ -69,6 +90,8 @@ const USAGE = `Gold SMC Scanner, live
   --fast               replay only: run the checks back to back instead of waiting for the clock
   --replay-start X     replay only: start at candle number X or at date X (e.g. 2026-09-01)
   --data-dir DIR       where history and state are kept (default live/data)
+  --open               open the dashboard in the browser once it is up
+  --stay               keep the dashboard open after --cycles or a --fast replay finish
   --no-server          do not start the dashboard`;
 
 // ---------- config ----------
@@ -110,34 +133,72 @@ function normalise(cfg) {
   const port = +cfg.port;
   cfg.port = Number.isInteger(port) && port >= 0 && port < 65536 ? port : DEFAULTS.port;
   cfg.symbol = String(cfg.symbol || 'XAUUSD').trim() || 'XAUUSD';
+  if (!sources.NAMES.includes(cfg.source)) throw new Error(`source "${cfg.source}" is not one of ${sources.NAMES.join(', ')}`);
+  if (!SMC.GRADES.includes(cfg.alerts.minGrade)) {
+    notes.push(`alerts.minGrade "${cfg.alerts.minGrade}" should be A+, A, B or C; using C (every grade).`);
+    cfg.alerts.minGrade = 'C';
+  }
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: cfg.timeZone });
+  } catch (err) {
+    notes.push(`timeZone "${cfg.timeZone}" is not a known zone name; using Asia/Kolkata.`);
+    cfg.timeZone = 'Asia/Kolkata';
+  }
   cfg.engine = cfg.engine || {};
   cfg.predict = cfg.predict || {};
   cfg.notes = notes;
   return cfg;
 }
 
-function loadConfig(file, overrides = {}) {
-  let user = {};
+function readUserConfig(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new Error(`could not read ${file}: ${err.message}`);
+  }
+  try {
+    return JSON.parse(text.replace(/^\uFEFF/, ''));   // Notepad may save a byte-order mark
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON (${err.message})`);
+  }
+}
+
+/*
+ * Defaults, then the file, then command-line overrides. With lenient, a broken file is reported
+ * in cfg.configError and the defaults are used, so the dashboard can still open and fix it.
+ */
+function loadConfig(file, overrides = {}, { lenient = false } = {}) {
+  let user = {}, configError = null;
+  // a settings file that does not exist yet is not an error: the Setup tab creates it
+  if (file && lenient && !fs.existsSync(file)) file = null;
   if (file) {
-    let text;
     try {
-      text = fs.readFileSync(file, 'utf8');
+      user = readUserConfig(file);
+      if (!isObj(user)) throw new Error(`${file} should hold one { ... } object`);
     } catch (err) {
-      throw new Error(`could not read ${file}: ${err.message}`);
-    }
-    try {
-      user = JSON.parse(text.replace(/^﻿/, ''));   // Notepad may save a byte-order mark
-    } catch (err) {
-      throw new Error(`${file} is not valid JSON (${err.message})`);
+      if (!lenient) throw err;
+      configError = err.message;
+      user = {};
     }
   }
-  const cfg = merge(merge(DEFAULTS, user), overrides);
+  let cfg;
+  try {
+    // a deep copy: merge shares untouched nested objects with DEFAULTS, and normalise edits in place
+    cfg = normalise(structuredClone(merge(merge(DEFAULTS, user), overrides)));
+  } catch (err) {
+    if (!lenient) throw err;
+    configError = configError || `${file || 'the settings'}: ${err.message}`;
+    cfg = normalise(structuredClone(merge(DEFAULTS, overrides)));
+  }
   cfg.configDir = file ? path.dirname(path.resolve(file)) : process.cwd();
-  return normalise(cfg);
+  cfg.configFile = file ? path.resolve(file) : null;
+  cfg.configError = configError;
+  return cfg;
 }
 
 function parseArgs(argv) {
-  const a = { config: null, overrides: {}, once: false, cycles: null, fast: false, noServer: false, dataDir: null, help: false };
+  const a = { config: null, overrides: {}, once: false, cycles: null, fast: false, noServer: false, dataDir: null, help: false, open: false, stay: false };
   for (let k = 0; k < argv.length; k++) {
     const arg = argv[k], eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
     const flag = eq > 0 ? arg.slice(0, eq) : arg;
@@ -158,6 +219,8 @@ function parseArgs(argv) {
       case '--cycles': a.cycles = Math.max(1, parseInt(value(), 10) || 1); break;
       case '--fast': a.fast = true; break;
       case '--no-server': a.noServer = true; break;
+      case '--open': a.open = true; break;
+      case '--stay': a.stay = true; break;
       case '--data-dir': a.dataDir = value(); break;
       case '--replay-start': {
         const v = value();
@@ -481,35 +544,78 @@ function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null,
 
 const fileKey = s => String(s).replace(/[^A-Za-z0-9._-]+/g, '_');
 
-function makeLogger(timeZone) {
-  let fmt;
+/*
+ * Console lines with the time in the trader's zone. With a file, every line is also appended to
+ * it (with the date), so what happened stays readable after the window is closed.
+ */
+function makeLogger(timeZone, { file = null, print = console.log } = {}) {
+  const opts = { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
+  let fmt, dfmt;
   try {
-    fmt = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    fmt = new Intl.DateTimeFormat('en-GB', { ...opts, timeZone });
+    dfmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone });
   } catch (err) {
-    fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    fmt = new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: 'UTC' });
+    dfmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' });
   }
-  return msg => console.log(`${fmt.format(new Date())}  ${msg}`);
+  let broken = false;
+  const log = msg => {
+    const now = new Date(), line = `${fmt.format(now)}  ${msg}`;
+    print(line);
+    if (!file || broken) return;
+    try {
+      try {
+        if (fs.statSync(file).size > LOG_MAX) fs.renameSync(file, file + '.1');
+      } catch (err) { /* no log yet */ }
+      fs.appendFileSync(file, `${dfmt.format(now)} ${line}\n`);
+    } catch (err) {
+      broken = true;   // a full disk or a locked file must not stop the scanner
+    }
+  };
+  log.file = file;
+  return log;
 }
 
 const SOURCE_NAMES = {
-  mt5: 'MetaTrader 5', twelvedata: 'Twelve Data', csv: 'CSV file', replay: 'replay of the bundled sample (demo, not live prices)',
+  auto: 'automatic', mt5file: 'MetaTrader 5 (GoldSMCExport)', mt5: 'MetaTrader 5', twelvedata: 'Twelve Data',
+  yahoo: 'Yahoo Finance gold futures (GC=F, about 10 min late)', csv: 'CSV file',
+  replay: 'replay of the bundled sample (demo, not live prices)',
 };
 
+// Feeds with the same prices share one history: MT5 through Python or through the expert advisor.
+const HISTORY_FAMILY = { mt5: 'mt5', mt5file: 'mt5', twelvedata: 'twelvedata', yahoo: 'yahoo', csv: 'csv', replay: 'replay' };
+
+// The first moment of the closed period t is in (a weekend or the daily break), or null when open.
+function closedSince(t) {
+  if (SMC.marketStatus(t).open) return null;
+  let x = Math.floor(t / 300) * 300;
+  for (let k = 0; k < 700 && !SMC.marketStatus(x - 300).open; k++) x -= 300;
+  return x;
+}
+
 class LiveScanner {
-  constructor(cfg, { source, notifier, log, clock, dataDir, lateRetryMs = LATE_MS, sleep } = {}) {
+  /*
+   * source "auto" has to be resolved first (LiveScanner.create does that); every other source
+   * is created here unless one is passed in.
+   */
+  constructor(cfg, { source, notifier, log, clock, dataDir, lateRetryMs = LATE_MS, sleep, news, autoPick = null } = {}) {
     this.cfg = cfg;
     this.lateRetryMs = lateRetryMs;
     this.sleep = sleep || (ms => new Promise(r => setTimeout(r, ms)));
-    this.log = log || makeLogger(cfg.timeZone);
-    this.clock = clock || (() => Date.now());
     this.dataDir = path.resolve(dataDir || DATA_DIR);
     fs.mkdirSync(this.dataDir, { recursive: true });
+    this.log = log || makeLogger(cfg.timeZone, { file: path.join(this.dataDir, 'scanner.log') });
+    this.clock = clock || (() => Date.now());
     this.tfs = cfg.timeframes;
     this.baseMin = this.tfs[0];
     this.baseSec = this.baseMin * 60;
-    // replay data stays apart from real history
-    const key = fileKey(cfg.symbol) + (cfg.source === 'replay' ? '-replay' : '');
-    const file = name => path.join(this.dataDir, name);
+    const name = source ? source.name : cfg.source;
+    if (name === 'auto') throw new Error('source "auto" has to be resolved first: use LiveScanner.create');
+    this.sourceName = name;
+    this.autoPick = autoPick;
+    // each feed keeps its own history (replay data stays apart from real history)
+    const key = `${fileKey(cfg.symbol)}-${HISTORY_FAMILY[name] || fileKey(name)}`;
+    const file = n => path.join(this.dataDir, n);
     this.files = {
       history: file(`${key}-${this.baseMin}m.csv`), state: file(`state-${key}.json`),
       latest: file(`latest-${key}.json`), forecasts: file(`forecasts-${key}.jsonl`),
@@ -521,14 +627,19 @@ class LiveScanner {
       knownOffset: this.state.mt5Offset, baseDir: cfg.configDir,
     });
     this.notifier = notifier || alerts.createNotifier({ ...cfg.alerts, timeZone: cfg.timeZone }, { log: this.log });
+    // news times only mean something for live prices
+    this.news = news !== undefined ? news : name === 'replay' ? null
+      : createNews(cfg.news, { dataDir: this.dataDir, log: this.log, clock: this.clock });
+    this.retry = [];   // alerts Telegram did not take, tried again at the next checks
     this.models = {};
     this.forecasts = this._loadForecasts();
     this.recentAlerts = [];
     this.health = {
       ok: null, error: null, lastFetchAt: null, lastOkAt: null, candles: this.history.length,
       lastCandle: this.history.length ? iso(this.history[this.history.length - 1].t) : null,
-      clockSkewSec: null, volume: null,
+      clockSkewSec: null, volume: null, market: null, lagMinutes: null,
     };
+    this.lastOkSec = null;
     this.said = new Set();
     this.nextRunAt = null;
     this.scheduled = false;
@@ -539,9 +650,22 @@ class LiveScanner {
     this.latest = null;
   }
 
+  // Resolves source "auto" (trying each feed), then builds the scanner.
+  static async create(cfg, opts = {}) {
+    if (cfg.source !== 'auto' || opts.source) return new LiveScanner(cfg, opts);
+    const tfMinutes = cfg.timeframes[0];
+    const pick = await sources.pickAuto(cfg, { tfMinutes, everyMinutes: cfg.everyMinutes, baseDir: cfg.configDir });
+    if (!pick.source) {
+      const why = pick.tried.map(t => `${SOURCE_NAMES[t.name] || t.name}: ${String(t.why).replace(/\.$/, '')}`).join('; ');
+      throw new Error(`no data source answered (${why}). Check the internet connection, or open the Setup tab`);
+    }
+    return new LiveScanner(cfg, { ...opts, source: pick.source, autoPick: pick });
+  }
+
   banner() {
     const a = this.cfg.alerts, tg = this.notifier.telegramEnabled ? ', Telegram' : '';
-    return `Gold SMC Scanner live · ${this.cfg.symbol} · source: ${SOURCE_NAMES[this.cfg.source] || this.cfg.source}`
+    const auto = this.autoPick ? ' (picked automatically)' : '';
+    return `Gold SMC Scanner live · ${this.cfg.symbol} · source: ${SOURCE_NAMES[this.sourceName] || this.sourceName}${auto}`
       + ` · ${this.tfs.map(t => t + 'm').join(' + ')} · checks every ${this.cfg.everyMinutes} min`
       + ` · alerts: ${a.on === 'all' ? 'every step' : 'entries'} (${a.console !== false ? 'console' : ''}${tg})`;
   }
@@ -553,7 +677,7 @@ class LiveScanner {
   }
 
   _loadState() {
-    const blank = { version: 1, symbol: this.cfg.symbol, lastProcessed: {}, sent: [], mt5Offset: null, replayNow: null };
+    const blank = { version: 1, symbol: this.cfg.symbol, lastProcessed: {}, sent: [], mt5Offset: null, replayNow: null, retry: [] };
     try {
       const s = JSON.parse(fs.readFileSync(this.files.state, 'utf8'));
       return { ...blank, ...s, lastProcessed: { ...(s.lastProcessed || {}) }, sent: Array.isArray(s.sent) ? s.sent : [] };
@@ -684,12 +808,20 @@ class LiveScanner {
     out.newCandles = known ? n - firstAfter(bars, prev) : 0;
     const found = collectAlerts(E, { lastT, mode: this.cfg.alerts.on, results: this.cfg.alerts.results !== false });
     const sent = new Set(this.state.sent), maxAge = this.cfg.alerts.maxAgeMinutes * 60;
+    const minRank = SMC.GRADES.indexOf(this.cfg.alerts.minGrade || 'C');
+    out.belowGrade = 0;
     for (const raw of found) {
       const t = bars[raw.at].t, k = `${tfMin}:${raw.kind}:${raw.dir}:${t}`;
       if (sent.has(k)) continue;
       // after the scanner was off for a while, old signals are counted but not sent
       if (t + tfSec < now - maxAge) {
         out.stale++;
+        continue;
+      }
+      // graded steps (zones, entries, results, cancels) below alerts.minGrade stay on the dashboard only
+      const g = raw.setup.grade;
+      if (minRank > 0 && g && SMC.GRADES.indexOf(g) < minRank) {
+        out.belowGrade++;
         continue;
       }
       const a = this._alert(raw, E, tfMin, out.forecast);
@@ -702,8 +834,12 @@ class LiveScanner {
 
   _alert(raw, E, tfMin, forecast) {
     const B = E.bars, s = raw.setup, at = raw.at, known = k => k !== null && k <= at;
+    const graded = known(s.armedAt);
     const a = {
       kind: raw.kind, symbol: this.cfg.symbol, tfMin, dir: raw.dir, t: B[at].t, time: iso(B[at].t),
+      risk: this.cfg.risk,
+      // news around the moment the alert goes out: the close of the candle
+      news: this.news && (raw.kind === 'entry' || raw.kind === 'armed') ? this.news.near(B[at].t + tfMin * 60) : [],
       timeZone: this.cfg.timeZone, entryZone: this.cfg.engine.entryZone || SMC.DEFAULTS.entryZone,
       setup: {
         id: s.id, label: s.label, src: s.src, levelPrice: s.level.price, sweepT: B[s.sweepAt].t,
@@ -713,6 +849,7 @@ class LiveScanner {
         fvg: s.fvgZone && { top: s.fvgZone.top, bottom: s.fvgZone.bottom },
         ob: s.obZone && { top: s.obZone.top, bottom: s.obZone.bottom },
         volX: s.disp ? s.disp.volX : null, reason: s.reason,
+        grade: graded ? s.grade : null, factors: graded ? s.factors : null,
       },
       entry: s.entry ? { ...s.entry } : null,
       entryT: s.entry ? B[s.entry.i].t : null,
@@ -735,12 +872,35 @@ class LiveScanner {
     }
   }
 
+  // While gold is closed (weekend, daily break) one check after the close collects the last
+  // candles; later checks are skipped until it opens, which also saves API requests.
+  _marketClosed(nowSec) {
+    if (this.cfg.marketHours === false || this.sourceName === 'replay') {
+      this.health.market = null;
+      return false;
+    }
+    const m = SMC.marketStatus(nowSec);
+    this.health.market = { open: m.open, opensAt: iso(m.opensAt) };
+    const since = closedSince(nowSec);
+    if (since === null || !this.history.length || this.lastOkSec === null || this.lastOkSec < since) return false;
+    this._say(`closed:${since}`, `Gold market closed; checks resume when it opens at ${alerts.dateTime(m.opensAt, this.cfg.timeZone)}.`);
+    return true;
+  }
+
   async _cycle() {
     const localNow = Math.floor(this.clock() / 1000);
+    if (this._marketClosed(localNow)) {
+      this._planNext(true);
+      if (this.latest) Object.assign(this.latest, { nextRunAt: this.nextRunAt ? new Date(this.nextRunAt).toISOString() : null });
+      return { ok: true, skipped: 'market closed' };
+    }
+    // the news calendar loads (at most hourly) while the candles are fetched
+    const newsDone = this.news ? this.news.refresh().catch(() => false) : null;
     let fetched;
     try {
       fetched = await this.source.fetchBars({ count: this._fetchCount(localNow), now: localNow });
     } catch (err) {
+      await newsDone;
       return this._fail(err, 'Fetch failed');
     }
     const src = this.source;
@@ -791,12 +951,35 @@ class LiveScanner {
     // save what was processed before sending, so a crash or restart never sends an alert twice
     this.state.sent = this.state.sent.concat(pending.map(a => a.key)).slice(-SENT_KEEP);
     this._saveState();
+    await newsDone;
+    await this._retryTelegram(now);
     for (const a of pending) {
+      if (this.news) {
+        // the calendar may have arrived after the alert was built
+        a.news = a.kind === 'entry' || a.kind === 'armed' ? this.news.near(a.t + a.tfMin * 60) : [];
+        a.text = alerts.message(a);
+      }
       a.delivery = await Promise.resolve().then(() => this.notifier.send(a)).catch(err => ({ error: err.message }));
-      this.recentAlerts.unshift({ time: a.time, kind: a.kind, tf: a.tfMin, dir: a.dir, text: a.text, sentAt: new Date(this.clock()).toISOString() });
+      if (a.delivery && a.delivery.telegram === false) this.retry.push(a);
+      this.recentAlerts.unshift({
+        time: a.time, kind: a.kind, tf: a.tfMin, dir: a.dir, text: a.text, sentAt: new Date(this.clock()).toISOString(),
+        grade: a.setup && a.setup.grade, telegram: a.delivery ? a.delivery.telegram : null,
+      });
     }
+    this.retry = this.retry.slice(-20);
     this.recentAlerts = this.recentAlerts.slice(0, 30);
-    Object.assign(this.health, { ok: true, error: null, lastOkAt: new Date(this.clock()).toISOString(), volume: results[this.baseMin].engine.hasVolume });
+    const lastBar = bars[bars.length - 1];
+    const lag = Math.round((now - (lastBar.t + this.baseSec)) / 60);
+    const lagLimit = this.sourceName === 'yahoo' ? 25 : 15;
+    this.lastOkSec = Math.floor(this.clock() / 1000);
+    Object.assign(this.health, {
+      ok: true, error: null, lastOkAt: new Date(this.clock()).toISOString(), volume: results[this.baseMin].engine.hasVolume,
+      lagMinutes: lag,
+      warning: this.health.market && this.health.market.open && lag > lagLimit
+        ? `The newest candle is ${lag} min old: the feed may be stalled (is MT5 connected?)` : null,
+      // alerts held back by alerts.minGrade since the scanner started
+      belowGrade: (this.health.belowGrade || 0) + Object.values(results).reduce((n, r) => n + (r.belowGrade || 0), 0),
+    });
     this.retrying = false;
     const next = this._planNext(true);
     this.latest = this._apiState(results, now);
@@ -804,6 +987,24 @@ class LiveScanner {
     const line = this._summary(results, pending.length, stale, next);
     this.log(line);
     return { ok: true, now, fetched: fetched.length, merge: { ...m, bars: undefined }, trimmed, alerts: pending, stale, line, results };
+  }
+
+  // Alerts Telegram did not take are tried again (Telegram only) while they are still fresh.
+  async _retryTelegram(nowSec) {
+    if (!this.retry.length || !this.notifier.telegramEnabled) return;
+    const keep = this.cfg.alerts.maxAgeMinutes * 60, queue = this.retry;
+    this.retry = [];
+    for (const a of queue) {
+      if (a.t + a.tfMin * 60 < nowSec - keep) continue;
+      let r;
+      try {
+        r = await this.notifier.send(a, { console: false });
+      } catch (err) {
+        r = { telegram: false };
+      }
+      if (r.telegram === false) this.retry.push(a);
+      else this.log(`Telegram took the earlier ${a.kind} alert (${a.tfMin}m ${alerts.clock(a.t, this.cfg.timeZone)}) on a retry.`);
+    }
   }
 
   _fail(err, what) {
@@ -873,14 +1074,36 @@ class LiveScanner {
     return parts.join(' · ');
   }
 
+  // What the dashboard shows about the feed, news and settings, apart from the scan itself.
+  _context() {
+    const nowSec = Math.floor(this.clock() / 1000);
+    const info = this.source.info || {};
+    return {
+      symbol: this.cfg.symbol, source: this.source.name, sourceLabel: SOURCE_NAMES[this.source.name] || this.source.name,
+      sourceInfo: {
+        symbol: info.symbol || null, serverOffsetMinutes: info.serverOffsetMinutes === undefined ? null : info.serverOffsetMinutes,
+        dst: info.dst || null, delayedMinutes: info.delayedMinutes || null, note: info.symbolNote || null,
+      },
+      auto: this.autoPick ? { tried: this.autoPick.tried } : null,
+      live: this.source.name !== 'replay',
+      everyMinutes: this.cfg.everyMinutes, timeZone: this.cfg.timeZone,
+      risk: this.cfg.risk, configError: this.cfg.configError || null, notes: this.cfg.notes || [],
+      news: this.news ? {
+        enabled: this.news.enabled, error: this.news.error, fetchedAt: this.news.fetchedAt ? new Date(this.news.fetchedAt).toISOString() : null,
+        upcoming: this.news.upcoming(nowSec, 36).slice(0, 12),
+      } : null,
+      engine: { ...SMC.DEFAULTS, ...this.cfg.engine },
+      logFile: this.log.file || null,
+    };
+  }
+
   _apiState(results, now) {
     const out = {
-      symbol: this.cfg.symbol, source: this.source.name, live: this.source.name !== 'replay',
+      ...this._context(),
       updatedAt: new Date(this.clock()).toISOString(), dataTime: iso(now),
       nextRunAt: this.nextRunAt ? new Date(this.nextRunAt).toISOString() : null,
-      everyMinutes: this.cfg.everyMinutes, timeZone: this.cfg.timeZone,
       health: { ...this.health },
-      alerts: { on: this.cfg.alerts.on, telegram: !!this.notifier.telegramEnabled, recent: this.recentAlerts },
+      alerts: { on: this.cfg.alerts.on, minGrade: this.cfg.alerts.minGrade, telegram: !!this.notifier.telegramEnabled, recent: this.recentAlerts },
       timeframes: {},
     };
     for (const tf of this.tfs) {
@@ -897,12 +1120,16 @@ class LiveScanner {
   // What GET /api/state returns: the last good scan with the current health and next run.
   apiState() {
     const base = this.latest || {
-      symbol: this.cfg.symbol, source: this.source.name, live: this.source.name !== 'replay', updatedAt: null,
-      everyMinutes: this.cfg.everyMinutes, timeZone: this.cfg.timeZone, alerts: { on: this.cfg.alerts.on, recent: [] }, timeframes: {},
+      updatedAt: null, alerts: { on: this.cfg.alerts.on, minGrade: this.cfg.alerts.minGrade, telegram: !!this.notifier.telegramEnabled, recent: [] },
+      timeframes: {},
     };
     const health = { ...this.health };
     if (!this.latest && !health.error) health.error = 'waiting for the first check';
-    return { ...base, nextRunAt: this.nextRunAt ? new Date(this.nextRunAt).toISOString() : null, health };
+    // feed, news and settings are always current, even between checks
+    return {
+      ...base, ...this._context(), alerts: { ...base.alerts, recent: this.recentAlerts },
+      nextRunAt: this.nextRunAt ? new Date(this.nextRunAt).toISOString() : null, busy: this.busy, health,
+    };
   }
 
   /*
@@ -910,6 +1137,8 @@ class LiveScanner {
    * the checks run back to back. Checks never overlap: the next is planned after one ends.
    */
   run({ cycles = Infinity, fast = false, delayMs = 0 } = {}) {
+    // back-to-back checks are for replays only, never for a real feed
+    fast = fast && this.sourceName === 'replay';
     this.running = true;
     this.scheduled = !fast;
     return new Promise(resolve => {
@@ -994,12 +1223,77 @@ function send(res, status, type, body, method = 'GET', headers = {}) {
   res.end(method === 'HEAD' ? undefined : buf);
 }
 
-function createServer(scanner, { root = ROOT } = {}) {
+// POST bodies come only from the dashboard itself: JSON (which a form on another site cannot
+// send without asking first) and, when the browser says where it comes from, this PC.
+function postAllowed(req) {
+  if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  try {
+    return localHost(new URL(origin).host);
+  } catch (err) {
+    return false;
+  }
+}
+
+function readBody(req, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', c => {
+      size += c.length;
+      if (size > limit) {
+        reject(new Error('too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch (err) {
+        reject(new Error('not JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function createServer(target, { root = ROOT } = {}) {
   const rootDir = path.resolve(root);
+  // either an App (settings can be changed from the page) or just a scanner
+  const app = target && typeof target.reconfigure === 'function' ? target : null;
+  const scanner = () => (app ? app.scanner : target);
+  const vendor = path.join(rootDir, 'vendor', path.basename(VENDOR_LWC));
+  const json = (res, status, obj, method) => send(res, status, TYPES['.json'], JSON.stringify(obj), method, { 'cache-control': 'no-store' });
+
+  async function post(req, res, p) {
+    if (!app) return send(res, 404, TEXT, 'Not found');
+    if (!postAllowed(req)) return send(res, 403, TEXT, 'Forbidden');
+    let body;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      return send(res, 400, TEXT, `Bad request: ${err.message}`);
+    }
+    try {
+      if (p === '/api/config') return json(res, 200, await app.reconfigure(body.config || {}));
+      if (p === '/api/test-source') return json(res, 200, await app.testSource(body.config || {}));
+      if (p === '/api/test-telegram') return json(res, 200, await app.testTelegram(body));
+      if (p === '/api/telegram-chats') return json(res, 200, await app.telegramChats(body));
+      if (p === '/api/check-now') return json(res, 200, await app.checkNow());
+    } catch (err) {
+      return json(res, 200, { ok: false, error: err.message });
+    }
+    return send(res, 404, TEXT, 'Not found');
+  }
+
   return http.createServer((req, res) => {
     const method = req.method;
     try {
-      if (method !== 'GET' && method !== 'HEAD') return send(res, 405, TEXT, 'Method not allowed', method, { allow: 'GET, HEAD' });
       if (!localHost(req.headers.host)) return send(res, 403, TEXT, 'Forbidden', method);
       let p;
       try {
@@ -1007,12 +1301,18 @@ function createServer(scanner, { root = ROOT } = {}) {
       } catch (err) {
         return send(res, 400, TEXT, 'Bad request', method);
       }
-      if (p === '/api/state') {
-        return send(res, 200, TYPES['.json'], JSON.stringify(scanner.apiState()), method, { 'cache-control': 'no-store' });
+      if (method === 'POST' && p.startsWith('/api/')) {
+        post(req, res, p).catch(() => { if (!res.headersSent) send(res, 500, TEXT, 'Server error'); });
+        return;
       }
+      if (method !== 'GET' && method !== 'HEAD') return send(res, 405, TEXT, 'Method not allowed', method, { allow: 'GET, HEAD' });
+      if (p === '/api/state') return json(res, 200, scanner().apiState(), method);
+      if (p === '/api/config' && app) return json(res, 200, app.publicConfig(), method);
       if (p === '/' || p === '/index.html') {
         return fs.readFile(path.join(rootDir, 'index.html'), 'utf8', (err, html) => {
           if (err) return send(res, 404, TEXT, 'index.html not found', method);
+          // the chart library from this folder when it is there, so the page works without the CDN
+          if (fs.existsSync(vendor)) html = html.replace(CDN_LWC, `vendor/${path.basename(vendor)}`);
           send(res, 200, TYPES['.html'], wrapPage(html), method);
         });
       }
@@ -1039,6 +1339,316 @@ function listen(server, port, host = '127.0.0.1') {
   });
 }
 
+// True when a Gold SMC Scanner already answers on this port.
+async function isScannerAt(port) {
+  try {
+    const r = await request(`http://127.0.0.1:${port}/api/state`, { timeoutMs: 2500 });
+    const j = JSON.parse(r.body);
+    return r.status === 200 && !!j && typeof j === 'object' && 'timeframes' in j && 'health' in j;
+  } catch (err) {
+    return false;
+  }
+}
+
+function openBrowser(url, log = () => {}) {
+  const fail = () => log(`Open ${url} in your browser.`);
+  try {
+    // cmd's start needs the empty window title and its own quoting, hence verbatim arguments
+    const child = process.platform === 'win32'
+      ? spawn('cmd.exe', ['/d', '/s', '/c', `start "" "${url}"`], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true })
+      : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { detached: true, stdio: 'ignore' });
+    child.on('error', fail);
+    child.unref();
+  } catch (err) {
+    fail();
+  }
+}
+
+// ---------- the app: one scanner at a time, settings from the dashboard ----------
+
+const getIn = (o, keys) => keys.reduce((x, k) => (x !== null && typeof x === 'object' ? x[k] : undefined), o);
+function setIn(o, keys, v) {
+  let x = o;
+  for (const k of keys.slice(0, -1)) {
+    if (!isObj(x[k])) x[k] = {};
+    x = x[k];
+  }
+  x[keys[keys.length - 1]] = v;
+}
+
+// The settings the Setup tab can change.
+const EDITABLE = [
+  'source', 'symbol', 'timeZone', 'everyMinutes', 'timeframes', 'marketHours',
+  'mt5file', 'mt5', 'twelvedata', 'yahoo', 'csv', 'replay', 'alerts', 'risk', 'news', 'engine',
+];
+
+/*
+ * Shown while no feed has answered yet (source "auto" with no internet, say). It keeps trying
+ * every minute and hands over to a real scanner as soon as one starts.
+ */
+class WaitingScanner {
+  constructor(app, cfg, error, { retryMs = RETRY_MS } = {}) {
+    Object.assign(this, { app, cfg, error, retryMs, running: false, busy: false, timer: null, nextRunAt: null });
+  }
+
+  banner() {
+    return `Gold SMC Scanner live · ${this.cfg.symbol} · waiting for a data source`;
+  }
+
+  apiState() {
+    return {
+      symbol: this.cfg.symbol, source: null, sourceLabel: 'none yet', live: true, updatedAt: null, timeframes: {},
+      everyMinutes: this.cfg.everyMinutes, timeZone: this.cfg.timeZone, risk: this.cfg.risk,
+      configError: this.cfg.configError || null, notes: this.cfg.notes || [], news: null,
+      alerts: { on: this.cfg.alerts.on, minGrade: this.cfg.alerts.minGrade, recent: [] },
+      nextRunAt: this.nextRunAt ? new Date(this.nextRunAt).toISOString() : null, busy: this.busy,
+      health: { ok: false, error: this.error, waiting: true },
+    };
+  }
+
+  async cycle() {
+    this.busy = true;
+    try {
+      const next = await this.app.build(this.cfg);
+      // settings saved from the dashboard meanwhile have already replaced this one
+      if (this.app.scanner !== this) return { ok: true };
+      this.app.swap(next);
+      return { ok: true };
+    } catch (err) {
+      this.error = err.message;
+      return { ok: false, error: err.message };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  run() {
+    this.running = true;
+    return new Promise(resolve => {
+      this._resolve = resolve;
+      const step = async () => {
+        if (!this.running) return;
+        this.nextRunAt = null;
+        const r = await this.cycle();
+        if (r.ok || !this.running) return resolve();
+        this.app.log(`Still no data source: ${this.error}. Trying again in ${Math.round(this.retryMs / 1000)} s.`);
+        this.nextRunAt = Date.now() + this.retryMs;
+        this.timer = setTimeout(step, this.retryMs);
+      };
+      this.nextRunAt = Date.now() + this.retryMs;
+      this.timer = setTimeout(step, this.retryMs);
+    });
+  }
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.timer);
+    if (this._resolve) this._resolve();
+  }
+
+  async idle() {}
+}
+
+class App {
+  constructor({ cfgFile = DEFAULT_CONFIG, overrides = {}, dataDir, log = console.log, scannerOpts = {}, retryMs } = {}) {
+    Object.assign(this, { cfgFile, overrides, dataDir, log, scannerOpts, retryMs });
+    this.scanner = null;
+    this.cfg = null;
+    this.stopped = false;
+  }
+
+  build(cfg) {
+    return LiveScanner.create(cfg, { dataDir: this.dataDir, log: this.log, ...this.scannerOpts });
+  }
+
+  async init(cfg) {
+    this.cfg = cfg;
+    try {
+      this.scanner = await this.build(cfg);
+    } catch (err) {
+      this.log(`Could not start the scanner: ${err.message}.`);
+      this.scanner = new WaitingScanner(this, cfg, err.message, { retryMs: this.retryMs });
+    }
+    return this.scanner;
+  }
+
+  // Replace the running scanner (its loop ends; runForever carries on with the new one).
+  swap(next) {
+    const old = this.scanner;
+    this.scanner = next;
+    this.cfg = next.cfg;
+    if (old && old !== next) old.stop();
+    this.log(next.banner());
+    this._wakeUp();
+  }
+
+  _wakeUp() {
+    const w = this._wake;
+    this._wake = null;
+    if (w) w();
+  }
+
+  /*
+   * Runs the current scanner, and the next one after a swap. With stay, a scanner whose checks
+   * are done (--cycles, the end of a replay) leaves the dashboard up until stop() or a swap.
+   */
+  async runForever(opts = {}) {
+    const { stay = false, onDone = null, ...runOpts } = opts;
+    for (;;) {
+      const s = this.scanner;
+      await s.run(runOpts);
+      if (this.stopped) return;
+      if (this.scanner !== s) continue;
+      if (!stay) return;
+      if (onDone) onDone();
+      await new Promise(r => { this._wake = r; });
+      if (this.stopped) return;
+    }
+  }
+
+  stop() {
+    this.stopped = true;
+    if (this.scanner) this.scanner.stop();
+    this._wakeUp();
+  }
+
+  publicConfig() {
+    const cfg = this.cfg, out = {};
+    for (const k of EDITABLE) out[k] = structuredClone(cfg[k]);
+    for (const keys of SECRETS) if (getIn(out, keys)) setIn(out, keys, MASK);
+    return {
+      config: out, file: this.cfgFile, error: cfg.configError || null, mask: MASK,
+      sources: sources.NAMES.map(name => ({ name, label: SOURCE_NAMES[name] })),
+      grades: SMC.GRADES, defaults: { engine: SMC.DEFAULTS },
+    };
+  }
+
+  // The user's file with `changes` merged in, secrets still masked resolved to the saved values.
+  _proposed(changes) {
+    let user = {};
+    try {
+      if (fs.existsSync(this.cfgFile)) user = readUserConfig(this.cfgFile);
+      if (!isObj(user)) user = {};
+    } catch (err) {
+      user = {};
+    }
+    const incoming = {};
+    for (const k of EDITABLE) if (changes[k] !== undefined) incoming[k] = structuredClone(changes[k]);
+    for (const keys of SECRETS) {
+      if (getIn(incoming, keys) === MASK) setIn(incoming, keys, getIn(this.cfg, keys) || '');
+    }
+    const next = merge(user, incoming);   // lists such as timeframes are replaced, not merged
+    // the dashboard's choices win over command-line options, except the port this page is on
+    const cfg = normalise(structuredClone(merge(merge(DEFAULTS, next), { port: this.cfg.port })));
+    cfg.configDir = path.dirname(path.resolve(this.cfgFile));
+    cfg.configFile = path.resolve(this.cfgFile);
+    cfg.configError = null;
+    return { user: next, cfg };
+  }
+
+  async reconfigure(changes) {
+    const { user, cfg } = this._proposed(changes);
+    const old = this.scanner;
+    // a check in progress finishes first, so two scanners never write the same files
+    for (let k = 0; k < 600 && old && old.busy; k++) await new Promise(r => setTimeout(r, 100));
+    let next;
+    try {
+      next = await this.build(cfg);
+    } catch (err) {
+      return { ok: false, saved: false, error: `Not saved: ${err.message}` };
+    }
+    try {
+      if (fs.existsSync(this.cfgFile)) {
+        try {
+          readUserConfig(this.cfgFile);
+        } catch (err) {
+          fs.copyFileSync(this.cfgFile, this.cfgFile.replace(/\.json$/i, '') + '.broken.json');   // keep what was there
+        }
+      }
+      writeFileAtomic(this.cfgFile, JSON.stringify(user, null, 2) + '\n');
+    } catch (err) {
+      return { ok: false, saved: false, error: `Could not save ${this.cfgFile}: ${err.message}` };
+    }
+    this.log(`Settings saved from the dashboard to ${this.cfgFile}; restarting the scanner.`);
+    this.swap(next);
+    return { ok: true, saved: true, source: next.sourceName, banner: next.banner(), auto: next.autoPick ? next.autoPick.tried : null };
+  }
+
+  // Try a feed with the proposed settings without touching the running scanner.
+  async testSource(changes) {
+    const { cfg } = this._proposed(changes);
+    const opts = { tfMinutes: cfg.timeframes[0], everyMinutes: cfg.everyMinutes, baseDir: cfg.configDir };
+    if (cfg.source === 'auto') {
+      const pick = await sources.pickAuto(cfg, opts);
+      return { ok: !!pick.source, source: pick.name, tried: pick.tried, error: pick.source ? null : 'no source answered' };
+    }
+    const src = sources.create(cfg, opts);
+    const bars = await src.fetchBars({ count: 50, now: Math.floor(Date.now() / 1000) });
+    if (!bars.length) return { ok: false, source: cfg.source, error: 'the source answered with no candles' };
+    const last = bars[bars.length - 1];
+    return {
+      ok: true, source: cfg.source, candles: bars.length, last: { time: iso(last.t), close: last.c },
+      info: src.info || null, volume: bars.some(b => b.v > 0),
+    };
+  }
+
+  _telegram(body) {
+    const saved = this.cfg.alerts.telegram || {};
+    const token = !body.botToken || body.botToken === MASK ? saved.botToken : String(body.botToken).trim();
+    const chatId = body.chatId === undefined || body.chatId === '' ? saved.chatId : String(body.chatId).trim();
+    return { token, chatId, base: saved.base };
+  }
+
+  async testTelegram(body = {}) {
+    const { token, chatId, base } = this._telegram(body);
+    if (!token) return { ok: false, error: 'Enter the bot token from @BotFather first' };
+    if (!chatId) return { ok: false, error: 'Enter your chat id first (use "Find my chat id")' };
+    return alerts.sendTelegram({ botToken: token, chatId, base, text: `✅ Gold SMC Scanner can send you alerts (${this.cfg.symbol}).` });
+  }
+
+  // The chats that have written to the bot lately, from getUpdates.
+  async telegramChats(body = {}) {
+    const { token, base } = this._telegram(body);
+    if (!token) return { ok: false, error: 'Enter the bot token from @BotFather first' };
+    const root = String(base || 'https://api.telegram.org').replace(/\/+$/, '');
+    let res;
+    try {
+      res = await request(`${root}/bot${token}/getUpdates`, { timeoutMs: 15000 });
+    } catch (err) {
+      return { ok: false, error: alerts.hide(`Telegram unreachable: ${err.message}`, token) };
+    }
+    let j = null;
+    try {
+      j = JSON.parse(res.body);
+    } catch (err) { /* judged below */ }
+    if (!j || !j.ok) {
+      const why = j && j.description ? j.description : `HTTP ${res.status}`;
+      return { ok: false, error: alerts.hide(`Telegram said: ${why}${res.status === 401 || res.status === 404 ? ' (check the bot token)' : ''}`, token) };
+    }
+    const chats = new Map();
+    for (const u of j.result || []) {
+      const m = u.message || u.edited_message || u.channel_post || u.my_chat_member || u.chat_member;
+      const c = m && m.chat;
+      if (!c || chats.has(c.id)) continue;
+      const name = c.title || [c.first_name, c.last_name].filter(Boolean).join(' ') || (c.username ? '@' + c.username : String(c.id));
+      chats.set(c.id, { id: String(c.id), name, type: c.type });
+    }
+    const list = [...chats.values()];
+    return {
+      ok: true, chats: list,
+      error: list.length ? null : 'No messages yet: open your bot in Telegram, send it /start, then try again',
+    };
+  }
+
+  async checkNow() {
+    const s = this.scanner;
+    if (s.busy) return { ok: false, error: 'a check is already running' };
+    // the regular schedule stays as it is
+    const r = await s.cycle();
+    return { ok: !!r.ok, error: r.error || null, skipped: r.skipped || null };
+  }
+}
+
 // ---------- command line ----------
 
 async function main(argv = process.argv.slice(2)) {
@@ -1053,51 +1663,106 @@ async function main(argv = process.argv.slice(2)) {
     console.log(USAGE);
     return 0;
   }
-  const cfgFile = args.config || (fs.existsSync(DEFAULT_CONFIG) ? DEFAULT_CONFIG : null);
-  let cfg, scanner;
+  const cfgFile = args.config || DEFAULT_CONFIG;
+  let cfg;
   try {
-    cfg = loadConfig(cfgFile, args.overrides);
-    scanner = new LiveScanner(cfg, { dataDir: args.dataDir || undefined });
+    cfg = loadConfig(args.config || fs.existsSync(cfgFile) ? cfgFile : null, args.overrides, { lenient: !args.once });
   } catch (err) {
     console.error(`Could not start: ${err.message}`);
     return 1;
   }
-  const log = scanner.log;
-  log(scanner.banner());
-  if (!cfgFile) log('No config.json yet, so the defaults are used. Copy live/config.example.json to live/config.json to choose your source and alerts.');
+  const dataDir = path.resolve(args.dataDir || DATA_DIR);
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (err) {
+    console.error(`Could not create the data folder ${dataDir}: ${err.message}`);
+    return 1;
+  }
+  const log = makeLogger(cfg.timeZone, { file: path.join(dataDir, 'scanner.log') });
+  if (cfg.configError) {
+    log(`Your settings file has a problem: ${cfg.configError}. Using the default settings for now; fix the file, or save settings from the dashboard's Setup tab.`);
+  }
+  if (!fs.existsSync(cfgFile)) log('No config.json yet, so the defaults are used. Open the dashboard\'s Setup tab to choose your source and alerts.');
   for (const note of cfg.notes) log(note);
 
-  if (args.once) {
-    const r = await scanner.cycle();
-    return r.ok ? 0 : 1;
-  }
-  let server = null;
-  if (!args.noServer) {
-    server = createServer(scanner);
-    try {
-      const port = await listen(server, cfg.port);
-      log(`Dashboard: http://localhost:${port}  (press Ctrl+C to stop)`);
-    } catch (err) {
-      log(err.code === 'EADDRINUSE'
-        ? `Port ${cfg.port} is already in use. Is the scanner already running in another window? Close it, or set another port in config.json.`
-        : `Could not start the dashboard: ${err.message}`);
-      return 1;
+  // a long-running monitor logs the unexpected and keeps going
+  const guard = what => err => log(`${what} (the scanner keeps running): ${(err && err.stack) || err}`);
+  const onRejection = guard('Unexpected error'), onException = guard('Unexpected error');
+  process.on('unhandledRejection', onRejection);
+  process.on('uncaughtException', onException);
+
+  const app = new App({ cfgFile, overrides: args.overrides, dataDir, log });
+  // until the scanner is ready the page shows "starting"
+  app.scanner = new WaitingScanner(app, cfg, 'starting: looking for a data source');
+  app.cfg = cfg;
+
+  // the dashboard first, so the browser has something to show while the feed is found
+  let server = null, port = null;
+  if (!args.noServer && !args.once) {
+    for (let k = 0; k <= 10; k++) {
+      const want = cfg.port === 0 ? 0 : cfg.port + k;
+      server = createServer(app);
+      try {
+        port = await listen(server, want);
+        break;
+      } catch (err) {
+        server = null;
+        if (err.code !== 'EADDRINUSE') {
+          log(`Could not start the dashboard: ${err.message}`);
+          return 1;
+        }
+        if (k === 0 && await isScannerAt(want)) {
+          log(`The scanner is already running: http://localhost:${want}`);
+          if (args.open) openBrowser(`http://localhost:${want}/`, log);
+          return 0;
+        }
+        if (k === 10) {
+          log(`Ports ${cfg.port}-${cfg.port + 10} are all in use. Set another port in config.json.`);
+          return 1;
+        }
+      }
     }
+    if (port !== cfg.port && cfg.port !== 0) log(`Port ${cfg.port} is used by another program, so the dashboard uses ${port}.`);
+  }
+
+  if (server) {
+    log(`Dashboard: http://localhost:${port}  (press Ctrl+C to stop)`);
+    if (args.open) openBrowser(`http://localhost:${port}/`, log);
+  }
+  if (cfg.source === 'auto') log('Looking for a data source: MT5 (GoldSMCExport expert), MT5 (Python), Twelve Data, then Yahoo Finance ...');
+  await app.init(cfg);
+  if (app.scanner instanceof LiveScanner) {
+    log(app.scanner.banner());
+    if (app.scanner.autoPick) {
+      for (const t of app.scanner.autoPick.tried.filter(x => !x.ok)) log(`  not ${SOURCE_NAMES[t.name] || t.name}: ${t.why}`);
+    }
+  }
+
+  if (args.once) {
+    const r = await app.scanner.cycle();
+    process.off('unhandledRejection', onRejection);
+    process.off('uncaughtException', onException);
+    return r.ok ? 0 : 1;
   }
   const stop = () => {
     log('Stopping.');
-    scanner.stop();
+    app.stop();
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
-  await scanner.run({ cycles: args.cycles || Infinity, fast: args.fast });
+  await app.runForever({
+    cycles: args.cycles || Infinity, fast: args.fast, stay: args.stay && !!server,
+    onDone: () => log(`Checks finished; the dashboard stays open at http://localhost:${port}. Press Ctrl+C or close this window to stop.`),
+  });
   process.off('SIGINT', stop);
   process.off('SIGTERM', stop);
+  process.off('unhandledRejection', onRejection);
+  process.off('uncaughtException', onException);
   if (server) {
     if (server.closeAllConnections) server.closeAllConnections();
     await new Promise(r => server.close(() => r()));
   }
-  return scanner.health.ok === false ? 1 : 0;
+  return app.scanner.health && app.scanner.health.ok === false ? 1 : 0;
 }
 
 if (require.main === module) {
@@ -1110,6 +1775,6 @@ if (require.main === module) {
 module.exports = {
   DEFAULTS, USAGE, loadConfig, parseArgs, merge, closedOnly, mergeBars, resampleClosed, firstAfter,
   readHistory, historyText, nextRunAt, collectAlerts, predictOptions, scoreForecasts, serialiseTimeframe,
-  LiveScanner, createServer, listen, safePath, wrapPage, localHost, main,
-  PAGE_HEAD, PAGE_TAIL, RETRAIN_EVERY,
+  LiveScanner, WaitingScanner, App, createServer, listen, safePath, wrapPage, localHost, postAllowed, makeLogger,
+  closedSince, isScannerAt, openBrowser, main, PAGE_HEAD, PAGE_TAIL, RETRAIN_EVERY, MASK, CDN_LWC,
 };

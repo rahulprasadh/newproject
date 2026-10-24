@@ -58,3 +58,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## TradingView Lightweight Charts 4.2.3
+
+`smc-scanner/vendor/lightweight-charts.standalone.production.js` is an unmodified copy of
+[lightweight-charts](https://github.com/tradingview/lightweight-charts) 4.2.3 from npm,
+Copyright (c) 2025 TradingView, Inc., licensed under the Apache License 2.0. The full licence
+text is in `smc-scanner/vendor/LICENSE-lightweight-charts.txt`. The live scanner serves this copy
+so the dashboard works when the CDN cannot be reached.

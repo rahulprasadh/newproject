@@ -1,8 +1,8 @@
 {
-  "_readme": "Copy this file to config.json in the same folder and edit it. Keys that start with _ are notes and are ignored. config.json holds your keys, so it is kept out of git.",
+  "_readme": "You do not need this file: the dashboard's Setup tab (http://localhost:8787) writes live/config.json for you. To edit by hand, copy this file to config.json in the same folder. Keys that start with _ are notes and are ignored. config.json holds your keys, so it is kept out of git.",
 
-  "source": "mt5",
-  "_source": "Where candles come from: mt5 (the MetaTrader 5 terminal on this PC), twelvedata (free API key), csv (a file an MT5 script keeps writing) or replay (the bundled sample, a demo that is not live).",
+  "source": "auto",
+  "_source": "Where candles come from. auto: the first that works of mt5file, mt5, twelvedata (with a key), yahoo. mt5file: MT5 through the GoldSMCExport expert (no Python). mt5: MT5 through Python. twelvedata: free API key. yahoo: free, no key; gold futures about 10 minutes late. csv: a file another program writes. replay: the bundled sample, a demo.",
 
   "symbol": "XAUUSD",
   "_symbol": "Name used in alerts and in the data file names under live/data.",
@@ -16,11 +16,22 @@
   "timeframes": [5, 15],
   "_timeframes": "Timeframes to scan, in minutes. The smallest is fetched; the others are built from it.",
 
+  "marketHours": true,
+  "_marketHours": "Skip checks while gold is closed (Friday 17:00 to Sunday 18:00 New York, and 17:00-18:00 every day). One check after the close still collects the last candles.",
+
   "port": 8787,
-  "_port": "The dashboard runs at http://localhost:8787 on this PC only.",
+  "_port": "The dashboard runs at http://localhost:8787 on this PC only. If another program has the port, the next free one is used.",
 
   "historyCandles": 50000,
-  "_historyCandles": "Most candles kept in live/data/<SYMBOL>-5m.csv (50,000 five-minute candles is about 8 months). The forecaster learns from this history, so it gets better as it grows.",
+  "_historyCandles": "Most candles kept in live/data (50,000 five-minute candles is about 8 months). The forecaster learns from this history, so it gets better as it grows.",
+
+  "mt5file": {
+    "folder": "",
+    "symbol": "",
+    "maxStatusAgeSeconds": 180,
+    "dst": "auto"
+  },
+  "_mt5file": "The GoldSMCExport expert writes to MT5's Common Files folder (%APPDATA%\\MetaQuotes\\Terminal\\Common\\Files\\GoldSMC), which is found automatically. folder: only if it lives elsewhere. symbol: empty picks the gold export (XAUUSD, XAUUSD.m, GOLD ...). dst: 'auto' converts broker server time to UTC per candle for 'New York close' brokers (UTC+2 winter, UTC+3 summer); 'us' or 'none' to force it.",
 
   "mt5": {
     "python": "python",
@@ -28,16 +39,23 @@
     "serverUtcOffsetMinutes": "auto",
     "fallbackOffsetMinutes": null,
     "terminalPath": "",
-    "pythonArgs": []
+    "pythonArgs": [],
+    "dst": "auto",
+    "findSymbol": true
   },
-  "_mt5": "python: the command or full path of python.exe. symbol: the exact name in MT5's Market Watch (XAUUSD, XAUUSD.m, GOLD ...). serverUtcOffsetMinutes: 'auto' measures the broker's server-time offset from live ticks; or a number such as 180 for UTC+3. fallbackOffsetMinutes: used with 'auto' when the market is closed and no offset has been measured yet (often 120 in winter, 180 in summer). terminalPath: the full path of terminal64.exe, only when several MT5 terminals are installed. pythonArgs: extra arguments for Python, usually none.",
+  "_mt5": "python: the command or full path of python.exe. symbol: the name in MT5's Market Watch; with findSymbol true, XAUUSD.m, XAUUSDm or GOLD are found by themselves. serverUtcOffsetMinutes: 'auto' measures the broker's server-time offset from live ticks; or a number such as 180 for UTC+3. fallbackOffsetMinutes: used with 'auto' when the market is closed and no offset has been measured yet (often 120 in winter, 180 in summer). terminalPath: the full path of terminal64.exe, only when several MT5 terminals are installed.",
 
   "twelvedata": {
     "apiKey": "",
     "symbol": "XAU/USD",
     "maxCandles": 20000
   },
-  "_twelvedata": "apiKey: your free key from twelvedata.com. The free plan allows 800 requests a day and 8 a minute; a check every 5 minutes uses one request (288 a day), and the first start uses up to 4 to load maxCandles of history. Twelve Data has no volume for gold, so the volume check on the displacement candle is skipped.",
+  "_twelvedata": "apiKey: your free key from twelvedata.com. The free plan allows 800 requests a day and 8 a minute; a check every 5 minutes uses one request (288 a day, fewer with marketHours). Twelve Data has no volume for gold, so the volume check on the displacement candle is skipped.",
+
+  "yahoo": {
+    "symbol": "GC=F"
+  },
+  "_yahoo": "COMEX gold futures from Yahoo Finance: free, no sign-up, real volume, about 10 minutes late and a few dollars above spot. An unofficial feed that may change.",
 
   "csv": {
     "path": "",
@@ -54,6 +72,7 @@
 
   "alerts": {
     "on": "entry",
+    "minGrade": "C",
     "console": true,
     "bell": true,
     "results": true,
@@ -63,12 +82,29 @@
       "chatId": ""
     }
   },
-  "_alerts": "on: 'entry' alerts entries only; 'all' also alerts sweeps, CHoCHs, marked zones and cancelled setups. console: print alerts here, with a beep when bell is true. results: also alert when a trade hits TP or SL. maxAgeMinutes: signals older than this (e.g. after the PC slept) are counted but not sent. telegram: botToken from @BotFather and your chatId; leave empty to skip Telegram.",
+  "_alerts": "on: 'entry' alerts entries only; 'all' also alerts sweeps, CHoCHs, marked zones and cancelled setups. minGrade: only alert setups graded at least this (A+, A, B, or C for all). console: print alerts here, with a beep when bell is true. results: also alert when a trade hits TP or SL. maxAgeMinutes: signals older than this (e.g. after the PC slept) are counted but not sent. telegram: botToken from @BotFather and your chatId (the Setup tab finds it for you); leave empty to skip Telegram.",
+
+  "risk": {
+    "balance": 0,
+    "percent": 1,
+    "currency": "USD",
+    "usdRate": 1
+  },
+  "_risk": "Lot size in each entry alert. balance: your account size (0 = no size line). percent: risk per trade. currency: the account's currency; usdRate: how much of it one US dollar is (e.g. 84 for INR). XAUUSD: 1 lot = 100 oz.",
+
+  "news": {
+    "enabled": true,
+    "currencies": ["USD"],
+    "impact": ["High"],
+    "beforeMinutes": 30,
+    "afterMinutes": 15
+  },
+  "_news": "Warn on alerts within beforeMinutes before or afterMinutes after a high-impact release (Forex Factory's free weekly calendar, fetched at most once an hour).",
 
   "engine": {
     "spread": 0.25
   },
-  "_engine": "Options for the SMC engine, the same as the page's Settings tab (e.g. rr, entryZone, killzones, htfFilter, patterns). spread is in price: 0.25 suits XAUUSD at most brokers; use your broker's typical spread.",
+  "_engine": "Options for the SMC engine, the same as the page's Settings tab (e.g. rr, entryZone, killzones, htfFilter, minGrade, patterns). The Setup tab can copy the page's settings here. spread is in price: 0.25 suits XAUUSD at most brokers.",
 
   "predict": {},
   "_predict": "Options for the next-move forecaster (horizons, liqHorizon, stride ...). Usually left empty."

@@ -608,3 +608,64 @@ test('firstTouchOnly: only a pattern that includes the first touch counts', () =
   const hs = SMC.run(bars(edit), { ...OPTS, firstTouchOnly: true }).setups[0];
   assert.deepEqual([hs.entry.i, hs.entry.pattern, hs.entry.patternFrom], [21, 'Head & shoulders', 19]);
 });
+
+test('grades an armed setup from its confluences, known when the zones are marked', () => {
+  const e = SMC.run(bars(), { ...OPTS, liqSources: SWING_ONLY });
+  const [s] = e.setups.filter(x => x.entry);
+  // swing liquidity, outside London/NY: liquidity and killzone fail
+  const by = Object.fromEntries(s.factors.map(f => [f.key, f.ok]));
+  assert.equal(by.liquidity, false);
+  assert.equal(by.killzone, false);
+  assert.equal(by.pd, s.obPd <= 0.5);
+  assert.equal(by.volume, s.disp.volX >= 2);
+  assert.equal(s.score, s.factors.filter(f => f.ok).length);
+  assert.equal(s.scoreOf, s.factors.length);
+  assert.equal(s.entry.grade, s.grade);
+  assert.ok(SMC.GRADES.includes(s.grade));
+  assert.equal(e.events.find(x => x.type === 'disp').grade, s.grade);
+  // the summary tallies entries by grade
+  const g = e.summary().byGrade;
+  assert.equal(Object.values(g).reduce((n, t) => n + t.entries, 0), 1);
+  assert.equal(g[s.grade].entries, 1);
+});
+
+test('grade: every factor met is A+, the trend and volume factors drop out when unavailable', () => {
+  const s = { src: 'prevDay', label: 'PDL', session: 'london', dir: 'bull', aligned: true, obPd: 0.3, disp: { volX: 2.5 } };
+  assert.equal(SMC.gradeOf(s).grade, 'A+');
+  assert.equal(SMC.gradeOf(s).of, 5);
+  assert.equal(SMC.gradeOf({ ...s, aligned: false }).grade, 'A');
+  assert.equal(SMC.gradeOf({ ...s, aligned: false, session: 'asia' }).grade, 'B');
+  assert.equal(SMC.gradeOf({ ...s, aligned: false, session: 'asia', src: 'swing' }).grade, 'C');
+  const plain = SMC.gradeOf({ ...s, aligned: false }, { htf: false, hasVolume: false });
+  assert.equal(plain.of, 3);
+  assert.equal(plain.grade, 'A+');
+});
+
+test('minGrade drops setups graded below it when their zones are marked', () => {
+  const all = SMC.run(bars(), { ...OPTS, liqSources: SWING_ONLY });
+  const [s] = all.setups.filter(x => x.entry);
+  const above = SMC.GRADES[Math.min(3, SMC.GRADES.indexOf(s.grade) + 1)];
+  if (above === s.grade) return;   // already A+
+  const e = SMC.run(bars(), { ...OPTS, liqSources: SWING_ONLY, minGrade: above });
+  const t = e.setups.find(x => x.sweepAt === s.sweepAt);
+  assert.equal(t.entry, null);
+  assert.equal(t.endAt, t.armedAt);
+  assert.match(t.reason, /below the minimum/);
+});
+
+test('gold market hours: closed Friday 17:00 to Sunday 18:00 New York and 17:00-18:00 daily', () => {
+  const at = s => Date.parse(s) / 1000;
+  // 2026-10-23 is a Friday; New York is UTC-4 (EDT)
+  assert.equal(SMC.marketStatus(at('2026-10-23T20:59:00Z')).open, true);    // Fri 16:59 NY
+  const fri = SMC.marketStatus(at('2026-10-23T21:00:00Z'));                // Fri 17:00 NY
+  assert.equal(fri.open, false);
+  assert.equal(fri.opensAt, at('2026-10-25T22:00:00Z'));                   // Sun 18:00 NY
+  assert.equal(SMC.marketStatus(at('2026-10-24T12:00:00Z')).open, false);   // Saturday
+  assert.equal(SMC.marketStatus(at('2026-10-25T22:00:00Z')).open, true);    // Sun 18:00 NY
+  const brk = SMC.marketStatus(at('2026-10-27T21:30:00Z'));                // Tue 17:30 NY
+  assert.equal(brk.open, false);
+  assert.equal(brk.opensAt, at('2026-10-27T22:00:00Z'));
+  // after the November DST change New York is UTC-5
+  assert.equal(SMC.marketStatus(at('2026-11-06T21:30:00Z')).open, true);    // Fri 16:30 NY
+  assert.equal(SMC.marketStatus(at('2026-11-06T22:00:00Z')).open, false);   // Fri 17:00 NY
+});

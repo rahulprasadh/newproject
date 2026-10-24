@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Browser check of index.html (Playwright + Chromium). Not part of `node --test`.
-//   LWC_PATH=/path/to/lightweight-charts.standalone.production.js node smc-scanner/tools/ui_check.js [shotDir]
+//   node smc-scanner/tools/ui_check.js [shotDir]
 // Scenario 1 serves the page the way the claude.ai artifact host does (no api/state).
-// Scenario 2 runs the live runner on the replay source and opens it in Live mode.
+// Scenario 2 runs the live runner on the replay source: the page opens in Live mode, then the
+// Setup tab saves settings. Scenario 3 blocks the chart library and expects a clear message.
+// The chart library comes from vendor/ (or LWC_PATH).
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -11,14 +13,14 @@ const assert = require('assert');
 const { chromium } = require('playwright');
 
 const ROOT = path.resolve(__dirname, '..');
-const LWC_PATH = process.env.LWC_PATH;
+const LWC_PATH = process.env.LWC_PATH || path.join(ROOT, 'vendor', 'lightweight-charts.standalone.production.js');
 const SHOTS = path.resolve(process.argv[2] || path.join(os.tmpdir(), 'smc-ui-shots'));
 const LWC_URL = 'https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
 const ORIGIN = 'https://artifact.test';
 const TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.json': 'application/json', '.css': 'text/css' };
 
 if (!LWC_PATH || !fs.existsSync(LWC_PATH)) {
-  console.error('Set LWC_PATH to a local copy of lightweight-charts 4.2.3 (standalone production build).');
+  console.error('vendor/lightweight-charts.standalone.production.js is missing; set LWC_PATH to a copy of lightweight-charts 4.2.3.');
   process.exit(2);
 }
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -184,7 +186,13 @@ async function liveScenario(browser) {
   const S = new runner.LiveScanner(cfg, { dataDir, notifier, log: () => {}, source: sources.replay(cfg.replay, { tfMinutes: 5, bars }) });
   let r = await S.cycle();
   assert.equal(r.ok, true, r.error);
-  const server = runner.createServer(S);
+  // an app around the scanner, so the Setup tab can save to a config file of its own
+  const cfgFile = path.join(dataDir, 'config.json');
+  fs.writeFileSync(cfgFile, JSON.stringify({ source: 'replay', replay: { startIndex: target.at - 3 }, news: { enabled: false } }));
+  const app = new runner.App({ cfgFile, dataDir, log: () => {}, scannerOpts: { notifier } });
+  app.scanner = S;
+  app.cfg = cfg;
+  const server = runner.createServer(app);
   const port = await runner.listen(server, 0);
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await routeExternal(context, false);
@@ -194,7 +202,8 @@ async function liveScenario(browser) {
     await page.goto(`http://127.0.0.1:${port}/?poll=1`);
     await page.waitForSelector('#liveBtn:not([hidden])', { timeout: 15000 });
     ok('live: Live mode button is visible when served by the runner', true);
-    await page.click('#liveBtn');
+    await page.waitForFunction(() => document.querySelector('#liveBtn').getAttribute('aria-pressed') === 'true', null, { timeout: 10000 }).catch(() => {});
+    ok('live: the page opens in Live mode by itself', await page.$eval('#liveBtn', b => b.getAttribute('aria-pressed') === 'true'));
     await page.waitForFunction(() => /Updated \d\d:\d\d/.test(document.querySelector('#lStatus').innerText), null, { timeout: 10000 });
     const status = await page.$eval('#lStatus', el => el.innerText);
     ok('live: status line shows', /Updated \d\d:\d\d · next check|Updated \d\d:\d\d.*source/.test(status), status);
@@ -231,12 +240,76 @@ async function liveScenario(browser) {
     await page.click('[data-mode="history"]');
     await page.waitForFunction(() => /Training|Up|Down/.test(document.querySelector('#next').innerText), null, { timeout: 30000 });
     ok('live: leaving Live returns to the loaded history', await page.$eval('#liveBar', b => b.hidden));
+
+    // Setup tab: shows the running source, tests Telegram, saves and restarts the scanner;
+    // the app loop runs from here, as it does in the real runner
+    const loop = app.runForever({});
+    await page.click('[data-mode="live"]');
+    await page.waitForSelector('#tabSetup:not([hidden])', { timeout: 10000 });
+    await page.click('#tabSetup');
+    const st = await page.$eval('#setupStatus', el => el.innerText);
+    ok('setup: status names the running source', /Running on replay|Running on/.test(st), st.slice(0, 80));
+    ok('setup: every source is offered', (await page.$$('#setup input[name="src"]')).length === 7);
+    await page.click('#tgTest');
+    await page.waitForFunction(() => /✕|✓/.test(document.querySelector('#tgResult').innerText), null, { timeout: 10000 });
+    ok('setup: a Telegram test without a token explains what is missing', /bot token/i.test(await page.$eval('#tgResult', el => el.innerText)));
+    await page.check('#setup input[value="yahoo"]');
+    ok('setup: choosing a source shows its own fields', await page.$eval('#setup .srcmore[data-for="yahoo"]', el => !el.hidden));
+    await page.check('#setup input[value="replay"]');
+    await page.fill('#setup [data-k="risk.balance"]', '5000');
+    await page.selectOption('#setup [data-k="risk.currency"]', 'INR');
+    ok('setup: the exchange rate shows for a non-USD account', await page.$eval('#setup [data-k="risk.usdRate"]', el => !el.closest('label').hidden));
+    await page.selectOption('#setup [data-k="risk.currency"]', 'USD');
+    await page.screenshot({ path: path.join(SHOTS, 'setup.png') });
+    await page.click('#setupSave');
+    await page.waitForFunction(() => /✓|✕/.test(document.querySelector('#setupMsg').innerText), null, { timeout: 60000 });
+    const saved = await page.$eval('#setupMsg', el => el.innerText);
+    ok('setup: save restarts the scanner', /Saved/.test(saved), saved);
+    ok('setup: the file holds the new settings', JSON.parse(fs.readFileSync(cfgFile, 'utf8')).risk.balance === 5000);
+    ok('setup: the app runs a new scanner', app.scanner !== S);
+    await page.waitForFunction(() => /Updated \d\d:\d\d/.test(document.querySelector('#lStatus').innerText), null, { timeout: 30000 }).catch(() => {});
+    const after = await page.$eval('#lStatus', el => el.innerText);
+    ok('setup: the new scanner checks straight away and the page follows', /Updated \d\d:\d\d/.test(after), after);
+    ok('setup: the chart is not empty after the restart', await page.evaluate(() => document.querySelectorAll('#list .sig').length > 0 || /\d/.test(document.querySelector('#legend').innerText)));
+    await page.setViewportSize({ width: 400, height: 860 });
+    await page.waitForTimeout(300);
+    ok('setup 400 px: no horizontal overflow', (await overflow(page)) <= 0);
+    await page.screenshot({ path: path.join(SHOTS, 'setup-phone.png'), fullPage: true });
     ok('live scenario: no page or console errors', errors.length === 0, errors.join(' || '));
+    app.stop();
+    await loop;
   } finally {
     await context.close();
+    app.stop();
+    server.closeAllConnections();
     server.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
+}
+
+// No chart library (a blocked CDN, no internet): the page says so instead of staying blank.
+async function noLibraryScenario(browser) {
+  const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+  await context.route('**/*', route => {
+    const url = route.request().url();
+    if (url.startsWith(ORIGIN + '/')) {
+      const p = decodeURIComponent(new URL(url).pathname);
+      if (p === '/' || p === '/index.html') return route.fulfill({ status: 200, contentType: 'text/html', body: wrap(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')) });
+      const file = path.join(ROOT, p);
+      if (fs.existsSync(file) && file.startsWith(ROOT + path.sep)) return route.fulfill({ status: 200, contentType: TYPES[path.extname(file)] || 'text/plain', body: fs.readFileSync(file) });
+    }
+    return route.abort();
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(ORIGIN + '/index.html');
+  await page.waitForTimeout(800);
+  const msg = await page.$eval('#chart', el => el.innerText);
+  ok('no chart library: the page explains it', /chart library could not load/.test(msg), msg.slice(0, 60));
+  ok('no chart library: no script errors', errors.length === 0, errors.join(' || '));
+  await page.screenshot({ path: path.join(SHOTS, 'no-library.png') });
+  await context.close();
 }
 
 (async () => {
@@ -244,6 +317,7 @@ async function liveScenario(browser) {
   try {
     await artifactScenario(browser);
     await liveScenario(browser);
+    await noLibraryScenario(browser);
   } catch (err) {
     ok('ran without exceptions', false, err.stack);
   } finally {

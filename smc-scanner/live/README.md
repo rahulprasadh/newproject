@@ -1,106 +1,104 @@
-# Gold SMC Scanner, live (Windows)
+# Gold SMC Scanner, live
 
-The live scanner runs on your laptop. Every 5 minutes, just after a candle closes, it:
+Start it with **`start.bat`** one folder up, then use the dashboard's **Setup** tab for everything
+else. See [`../README.md`](../README.md) for the quick start. This page covers the details.
 
-1. fetches the latest XAUUSD candles from MetaTrader 5 (or Twelve Data),
+The live scanner runs on your PC. Every 5 minutes, just after a candle closes, it:
+
+1. fetches the latest XAUUSD candles from the source you chose,
 2. adds the closed ones to the history it keeps in `live\data`,
 3. runs the same SMC engine as the page on 5m, and on 15m built from the 5m candles,
-4. alerts each new signal once, in the console and on Telegram,
+4. alerts each new signal once: in the console, in the browser and on Telegram,
 5. retrains the next-move forecaster on all the history collected so far (every 12 new candles),
 6. and shows everything on a dashboard at http://localhost:8787.
 
-It only reads prices. It never places orders, so MT5 does not need Algo Trading switched on.
+It only reads prices. It never places orders.
 
-## 1. Install Node.js
-
-Download the **LTS** installer from https://nodejs.org and run it with the default options. To check it, open a new Command Prompt and type `node -v`; it should print v18 or later.
-
-## 2. Choose where the candles come from
-
-### MetaTrader 5 (recommended)
-
-Your broker's own prices and tick volume, straight from the terminal on this PC.
-
-1. Install **Python 3.11 or later** from https://www.python.org/downloads/. On the first installer screen, tick **Add python.exe to PATH**.
-2. Open a new Command Prompt and run:
-   ```
-   pip install MetaTrader5
-   ```
-3. Open the MT5 terminal and log in to your broker account (demo or live). Keep it open while the scanner runs.
-4. Check the symbol name in **Market Watch**. If your broker calls gold `XAUUSD.m` or `GOLD`, put that name in `mt5.symbol` in `config.json`.
-
-MT5 gives candle times in the broker's server time. With `"serverUtcOffsetMinutes": "auto"` the scanner measures that offset from live ticks and converts every candle to UTC, so the marks line up with TradingView. If you start it while the market is closed (weekend), set `fallbackOffsetMinutes` to your broker's offset (often 120 in winter, 180 in summer) or simply start it again once the market opens.
-
-### Twelve Data (no MT5 needed)
-
-1. Create a free account at https://twelvedata.com and copy your API key.
-2. In `config.json`, set `"source": "twelvedata"` and put the key in `twelvedata.apiKey`.
-
-The free plan allows 800 requests a day and 8 a minute. A check every 5 minutes uses 288 a day; the first start uses up to 4 more to load history. Twelve Data has no volume for gold, so the volume check on the displacement candle is skipped and only its size counts (the console says so once).
-
-### CSV file
-
-If an MT5 script or EA already writes candles to a file, set `"source": "csv"`, `csv.path` to the file and `csv.tzOffsetMinutes` to its time zone (MT5 server time is often 120 or 180). The file is re-read at every check.
-
-## 3. Telegram alerts (optional)
-
-1. In Telegram, open **@BotFather**, send `/newbot` and follow the steps. It gives you a **bot token** like `123456789:AAH...`.
-2. Open a chat with your new bot and send it any message (for example `/start`). A bot cannot message you first.
-3. Find your **chat id**: open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser (with your token in place of `<YOUR_TOKEN>`) and look for `"chat":{"id":123456789`. That number is the chat id. For a group, add the bot to the group, send a message there and use the group's id (it starts with `-`).
-4. Put both in `config.json`:
-   ```json
-   "telegram": { "botToken": "123456789:AAH...", "chatId": "123456789" }
-   ```
-
-The token is never written to the log. If Telegram is down the alert still shows in the console and the scan carries on.
-
-An entry alert looks like this:
+## Command line
 
 ```
-XAUUSD 5m BUY signal · Pin bar at OB
+node live\runner.js                         live scanner with live\config.json (or the defaults)
+node live\runner.js --open                  the same, and open the dashboard in the browser
+node live\runner.js --source yahoo          a source for this run only
+node live\runner.js --source replay --replay-start 2026-09-20 --fast --stay    the demo
+node live\runner.js --once                  one check, then exit (exit code 1 if it failed)
+node live\runner.js --help                  every option
+```
+
+`npm start`, `npm run demo` and `npm test` run the same from the `smc-scanner` folder.
+
+## Sources
+
+| `source` | What it needs |
+|---|---|
+| `auto` (default) | Nothing. Tries `mt5file`, `mt5`, `twelvedata` (only with a key) and `yahoo` in that order when the scanner starts, and keeps the first that answers until it restarts. The dashboard lists why the others were skipped. |
+| `mt5file` | MT5 open with the `GoldSMCExport` expert on an XAUUSD chart. See [`mt5/README.md`](mt5/README.md). |
+| `mt5` | Python 3.11+ with `pip install MetaTrader5`, and MT5 open and logged in. The broker's name for gold (XAUUSD.m, GOLD …) is found automatically. The server's UTC offset is measured from live ticks (`serverUtcOffsetMinutes: "auto"`). |
+| `twelvedata` | A free key from twelvedata.com. 800 requests a day; a check uses one, and closed hours use none. No volume for gold. |
+| `yahoo` | Nothing. COMEX gold futures (GC=F): about 10 minutes late and a few dollars above spot. An unofficial feed. |
+| `csv` | A candle file that another program keeps writing (`csv.path`, `csv.tzOffsetMinutes`). |
+| `replay` | Nothing. Replays the bundled sample on a virtual clock: a demo, not live prices. |
+
+## Telegram by hand
+
+The Setup tab does all of this with two buttons. Without it:
+
+1. In Telegram, open **@BotFather**, send `/newbot` and follow the steps. It gives you a **bot token** like `123456789:AAH...`.
+2. Open a chat with your new bot and send it `/start`. A bot cannot message you first.
+3. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and find `"chat":{"id":123456789`. That number is the chat id. For a group, add the bot to the group, send a message there and use the group's id (it starts with `-`).
+4. Put both in `config.json` under `alerts.telegram`.
+
+The token is never written to the log or shown by the dashboard. An entry alert looks like this:
+
+```
+XAUUSD 5m BUY signal · Pin bar at OB · grade A
 Entry 4,349.18  SL 4,341.67  TP 4,364.20 (2R)
+Size: 0.06 lot risks $45.06 (1% of $5,000)
 Swept PDL 4,340.45 at 23:05 · CHoCH 00:10 · IFVG · OB
+Confluence 3/4: Key liquidity (PDL), London or NY session, OB in discount
+⚠ High-impact news: USD CPI m/m in 25 min (18:00)
 Next move: 58% up in the next 1h (medium confidence)
 Past buy entries: 8 of 22 won (36%)
 ```
 
-Times are candle open times (as on the chart) in your time zone, India by default (`timeZone` in `config.json`). Set `alerts.on` to `"all"` to also get the steps before an entry: liquidity sweeps, CHoCHs, marked zones and cancelled setups.
+Times are candle open times (as on the chart) in your time zone, India by default. With `alerts.on`
+set to `"all"` you also get the steps before an entry: sweeps, CHoCHs, marked zones and cancelled setups.
 
-## 4. Start it
+## Timing
 
-1. In the `smc-scanner\live` folder, copy `config.example.json` to `config.json` and edit it (Notepad is fine). Every key is explained in the example file. `start-live.bat` makes the copy for you the first time if you skip this.
-2. Double-click **`start-live.bat`**. A console window opens and prints one line per check.
-3. Open **http://localhost:8787** in your browser for the dashboard.
+Checks run every `everyMinutes` (5 by default, 5 to 15 allowed), 8 seconds after each 5-minute mark,
+so each check sees the candle that just closed. The candle still forming is never used, and checks
+never overlap. If a fetch fails, the scanner keeps the last data, shows the error on the dashboard,
+tries once more after 60 seconds, then carries on at the normal times. A feed that is a few seconds
+late with the newest candle is asked once more after 20 seconds.
 
-To stop, close the window or press Ctrl+C. To start it with Windows, put a shortcut to `start-live.bat` in the Startup folder (Win+R, `shell:startup`).
-
-From a Command Prompt in the repository folder you can also run:
-
-```
-node smc-scanner\live\runner.js --config smc-scanner\live\config.json
-node smc-scanner\live\runner.js --source replay --fast --cycles 20     (demo on the bundled sample)
-node smc-scanner\live\runner.js --help
-```
-
-## How often it checks
-
-Checks run every `everyMinutes` (5 by default, 5 to 15 allowed), 8 seconds after each 5-minute mark: 10:05:08, 10:10:08 and so on, so each check sees the candle that just closed. The candle still forming is never used. Checks never overlap. If a fetch fails (MT5 closed, internet down) the scanner keeps the last data, shows the error on the dashboard, tries once more after 60 seconds, and then carries on at the normal times.
-
-The 15m chart is built from the 5m candles, so a 15m candle is scanned as soon as its last 5m candle closes.
+While gold is closed (Friday 17:00 to Sunday 18:00 New York, and 17:00 to 18:00 daily) there is
+one check after the close, then none until the open. Set `marketHours` to `false` to check anyway.
 
 ## What it remembers
 
-Everything lives in `smc-scanner\live\data` (not in git):
+Everything lives in `live\data` (not in git). Each source has its own files:
 
 | File | What it is |
 |---|---|
-| `XAUUSD-5m.csv` | The candle history the scanner has collected. It grows every check, up to `historyCandles`. You can load it into the page with **Load your CSV**. |
-| `state-XAUUSD.json` | The last candle processed per timeframe and the alerts already sent, so a restart never repeats an alert. |
-| `latest-XAUUSD.json` | The last scan, the same data the dashboard shows. |
-| `forecasts-XAUUSD.jsonl` | Every forecast the scanner made, so the dashboard can show how they turned out. |
-
-If the laptop was off or asleep, the next check fetches the missed candles. Signals from that gap are counted in the log but not sent, because they are older than `alerts.maxAgeMinutes` (30 by default).
+| `XAUUSD-<source>-5m.csv` | The candle history collected so far, up to `historyCandles`. Load it in the page with **Load your CSV**. |
+| `state-XAUUSD-<source>.json` | The last candle processed per timeframe and the alerts already sent, so a restart never repeats an alert. |
+| `latest-XAUUSD-<source>.json` | The last scan: what the dashboard shows. |
+| `forecasts-XAUUSD-<source>.jsonl` | Every forecast made, so the dashboard can show how they turned out. |
+| `news.json` | The last copy of the news calendar. |
+| `scanner.log` | Everything the console printed, with dates. It rolls over at 2 MB. |
 
 ## The forecast
 
-The forecaster (`predict.js`) learns from the collected history what usually came next: which side's liquidity was taken first, and whether price was higher 1 hour and 4 hours later. It is tested walk-forward, so its track record only counts calls made before their outcome was known. **Confidence** is high only when similar calls were right at least 60% of the time over 300 or more past calls; most calls are low confidence. It needs about 2,900 five-minute candles (around 10 trading days) before it starts, and it is retrained every 12 new candles. Treat it as context for a setup, not a signal on its own.
+The forecaster (`predict.js`) learns from the collected history what usually came next: which
+side's liquidity was taken first, and whether price was higher 1 hour and 4 hours later. It is tested
+walk-forward, so its track record only counts calls made before their outcome was known.
+**Confidence** is high only when similar calls were right at least 60% of the time over 300 or more
+past calls; most calls are low confidence. It needs about 2,900 five-minute candles (about 10
+trading days) before it starts. Treat it as context for a setup, not as a signal on its own.
+
+## Safety
+
+The dashboard listens on this PC only (127.0.0.1). Settings can only be changed from the dashboard
+page itself: requests from other websites are refused. `config.json` holds your keys and is
+git-ignored; the dashboard never shows them back.

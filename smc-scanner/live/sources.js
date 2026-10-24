@@ -15,6 +15,9 @@ const { request } = require('./http.js');
 
 const TD_INTERVAL = { 1: '1min', 5: '5min', 15: '15min', 30: '30min', 60: '1h' };
 const MT5_TF = { 1: 'M1', 5: 'M5', 15: 'M15', 30: 'M30', 60: 'H1' };
+const YH_INTERVAL = { 1: '1m', 5: '5m', 15: '15m', 30: '30m', 60: '60m' };
+const YH_MAX_DAYS = { 1: 7, 5: 59, 15: 59, 30: 59, 60: 700 };   // Yahoo's intraday history limits
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const TD_PAGE = 5000;             // Twelve Data's largest outputsize
 const SAMPLE = path.join(__dirname, '..', 'data', 'sample.js');
 
@@ -39,6 +42,29 @@ function toTimeframe(bars, tfSec, what) {
 }
 
 const utcText = t => new Date(t * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+/*
+ * MetaTrader 5 brokers stamp candles in their server time. Most gold brokers run "New York
+ * close" time, UTC+2 in winter and UTC+3 in summer, which moves with US daylight saving; others
+ * (Exness, for example) keep UTC+0 all year. A candle history converted with today's offset alone
+ * is an hour out on every candle from the other half of the year, so for New York close servers
+ * each candle is shifted by the change in New York's offset between its time and now.
+ * mode: 'auto' (decide from the offset now), 'us' or 'none'.
+ */
+function serverDst(offsetNowMin, nowSec, mode = 'auto') {
+  if (mode === 'none' || !Number.isFinite(+offsetNowMin)) return 'none';
+  if (mode === 'us') return 'us';
+  return +offsetNowMin - SMC.nyTime(nowSec).offsetMin === 420 ? 'us' : 'none';
+}
+
+function fixServerDst(bars, nowSec, dst) {
+  if (dst !== 'us' || !bars.length) return bars;
+  const nyNow = SMC.nyTime(nowSec).offsetMin;
+  return bars.map(b => {
+    const d = nyNow - SMC.nyTime(b.t).offsetMin;
+    return d ? { ...b, t: b.t + d * 60 } : b;
+  });
+}
 
 // ---------- Twelve Data ----------
 
@@ -114,6 +140,73 @@ function twelveData(cfg = {}, { tfMinutes = 5 } = {}) {
   return src;
 }
 
+// ---------- Yahoo Finance (no key) ----------
+
+function parseYahoo(json, tfSec) {
+  const chart = json && json.chart;
+  if (!chart) throw new Error('Yahoo Finance sent an unexpected answer');
+  if (chart.error) {
+    throw new Error(`Yahoo Finance error: ${chart.error.description || chart.error.code || 'unknown error'}`);
+  }
+  const r = chart.result && chart.result[0];
+  if (!r || !Array.isArray(r.timestamp)) return [];
+  const q = (r.indicators && r.indicators.quote && r.indicators.quote[0]) || {};
+  const out = [];
+  r.timestamp.forEach((t, k) => {
+    // the last point is often the latest trade, not a candle start: keep only aligned times
+    if (t % tfSec) return;
+    const b = { t, o: q.open && q.open[k], h: q.high && q.high[k], l: q.low && q.low[k], c: q.close && q.close[k], v: (q.volume && q.volume[k]) || 0 };
+    if ([b.o, b.h, b.l, b.c].some(x => x === null || x === undefined)) return;
+    out.push(b);
+  });
+  return cleanBars(out);
+}
+
+/*
+ * Free, no sign-up: COMEX gold futures (GC=F) from Yahoo Finance, with real traded volume.
+ * Futures trade a few dollars above spot XAUUSD and Yahoo's intraday data is about 10 minutes
+ * late, so the levels differ from your broker's chart. Good for trying the scanner; use MT5 for
+ * your broker's own prices. It is an unofficial feed and may change without notice.
+ */
+function yahoo(cfg = {}, { tfMinutes = 5 } = {}) {
+  const interval = YH_INTERVAL[tfMinutes];
+  if (!interval) throw new Error(`Yahoo Finance has no ${tfMinutes}-minute candles here; use 1, 5, 15, 30 or 60`);
+  const symbol = cfg.symbol || 'GC=F';
+  const base = String(cfg.base || 'https://query1.finance.yahoo.com').replace(/\/+$/, '');
+  const tfSec = tfMinutes * 60;
+  const src = { name: 'yahoo', lastNow: null, info: { symbol, interval, delayedMinutes: 10 } };
+  src.fetchBars = async ({ count = 5000, now } = {}) => {
+    src.lastNow = null;
+    const end = Math.floor(now || Date.now() / 1000);
+    // weekends and the daily break take about a third of the calendar, hence the margin
+    const days = Math.min(YH_MAX_DAYS[tfMinutes], Math.max(1, Math.ceil(count * tfSec * 1.5 / 86400) + 1));
+    const q = new URLSearchParams({
+      interval, period1: String(end - days * 86400), period2: String(end + 600), includePrePost: 'false',
+    });
+    let res;
+    try {
+      res = await request(`${base}/v8/finance/chart/${encodeURIComponent(symbol)}?${q}`, {
+        timeoutMs: 20000, headers: { 'user-agent': BROWSER_UA, accept: 'application/json' },
+      });
+    } catch (err) {
+      throw new Error(`Could not reach Yahoo Finance: ${err.message}`);
+    }
+    const d = Date.parse(res.headers.date || '');
+    if (!Number.isNaN(d)) src.lastNow = Math.floor(d / 1000);
+    if (res.status === 429) throw new Error('Yahoo Finance is limiting requests right now (HTTP 429); the next check will try again');
+    let json;
+    try {
+      json = JSON.parse(res.body);
+    } catch (err) {
+      throw new Error(`Yahoo Finance sent an unreadable answer (HTTP ${res.status})`);
+    }
+    if (res.status >= 400 && !(json && json.chart && json.chart.error)) throw new Error(`Yahoo Finance answered HTTP ${res.status}`);
+    const bars = parseYahoo(json, tfSec);
+    return count ? bars.slice(-count) : bars;
+  };
+  return src;
+}
+
 // ---------- MetaTrader 5 (through the Python helper) ----------
 
 function runPython(cmd, args, { timeoutMs = 60000, env } = {}) {
@@ -167,6 +260,7 @@ function mt5(cfg = {}, { tfMinutes = 5, knownOffset = null, helper, env } = {}) 
       args.push('--fallback-offset', String(+fallback));
     }
     if (cfg.terminalPath) args.push('--terminal', cfg.terminalPath);
+    if (cfg.findSymbol !== false) args.push('--find-symbol');
     const r = await runPython(python, args, { timeoutMs: (cfg.timeoutSeconds || 60) * 1000, env });
     let json;
     try {
@@ -180,12 +274,102 @@ function mt5(cfg = {}, { tfMinutes = 5, knownOffset = null, helper, env } = {}) 
     }
     if (json.error) throw new Error(json.error);
     src.lastNow = Number.isFinite(json.now) ? json.now : null;
+    const nowSec = src.lastNow || Math.floor(Date.now() / 1000);
+    const dst = serverDst(json.serverOffsetMinutes, nowSec, cfg.dst);
     src.info = {
       symbol: json.symbol || src.info.symbol, serverOffsetMinutes: json.serverOffsetMinutes,
-      offsetSource: json.offsetSource, tickFresh: !!json.tickFresh,
+      offsetSource: json.offsetSource, tickFresh: !!json.tickFresh, dst,
     };
+    if (json.symbol && json.symbol !== (cfg.symbol || 'XAUUSD')) src.info.symbolNote = `${cfg.symbol || 'XAUUSD'} is called ${json.symbol} at this broker`;
     if (json.offsetSource === 'auto') src.knownOffset = json.serverOffsetMinutes;
-    return cleanBars(json.bars);
+    return cleanBars(fixServerDst(cleanBars(json.bars), nowSec, dst));
+  };
+  return src;
+}
+
+// ---------- MetaTrader 5 (through the GoldSMCExport expert advisor, no Python) ----------
+
+// Where MT5 keeps files shared by all terminals: %APPDATA%\MetaQuotes\Terminal\Common\Files
+function mt5CommonDir(env = process.env) {
+  const appData = env.APPDATA || (env.USERPROFILE ? path.join(env.USERPROFILE, 'AppData', 'Roaming') : null);
+  return appData ? path.join(appData, 'MetaQuotes', 'Terminal', 'Common', 'Files') : null;
+}
+
+// The exporter's files for a symbol: {csv, status}, or null when no folder is known.
+function mt5FilePaths(cfg = {}, { tfMinutes = 5, env } = {}) {
+  const tf = MT5_TF[tfMinutes] || `M${tfMinutes}`;
+  if (cfg.path) {
+    const csv = path.resolve(cfg.path);
+    return { csv, status: csv.replace(/\.csv$/i, '') + '.json' };
+  }
+  const dir = cfg.folder || (mt5CommonDir(env) && path.join(mt5CommonDir(env), 'GoldSMC'));
+  if (!dir) return null;
+  let sym = cfg.symbol || '';
+  if (!sym) {
+    // whichever symbol the exporter runs on (XAUUSD, XAUUSD.m, GOLD ...): the newest status file
+    try {
+      // gold first (XAUUSD, XAUUSD.m, GOLD ...), then the most recently written
+      const found = fs.readdirSync(dir).filter(f => f.endsWith(`_${tf}.json`))
+        .map(f => ({ f, gold: /XAU|GOLD/i.test(f), m: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.gold - a.gold || b.m - a.m);
+      if (found.length) sym = found[0].f.slice(0, -(`_${tf}.json`.length));
+    } catch (err) { /* no folder yet */ }
+  }
+  if (!sym) sym = 'XAUUSD';
+  return { csv: path.join(dir, `${sym}_${tf}.csv`), status: path.join(dir, `${sym}_${tf}.json`), symbol: sym };
+}
+
+async function readRetry(file, tries = 3) {
+  for (let k = 1; ; k++) {
+    try {
+      return await fs.promises.readFile(file, 'utf8');
+    } catch (err) {
+      // MT5 may be swapping the file in this instant
+      if (k >= tries || err.code === 'ENOENT') throw err;
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+}
+
+/*
+ * Reads the candles GoldSMCExport.mq5 writes from the MT5 terminal into the Common Files folder:
+ * <SYMBOL>_M5.csv (t in broker server time, open, high, low, close, tick volume, closed candles
+ * only) and <SYMBOL>_M5.json (symbol, serverOffsetMinutes, writtenUtc, connected). The expert
+ * advisor rewrites the status every 30 s, so an old one means MT5 or the expert is not running.
+ */
+function mt5File(cfg = {}, { tfMinutes = 5, env, clock = () => Date.now() } = {}) {
+  const src = { name: 'mt5file', lastNow: null, info: {} };
+  src.paths = () => mt5FilePaths(cfg, { tfMinutes, env });
+  src.fetchBars = async ({ count } = {}) => {
+    const p = src.paths();
+    if (!p) throw new Error('Could not find the MT5 Common Files folder (APPDATA is not set); set mt5file.path in config.json');
+    let st;
+    try {
+      st = JSON.parse((await readRetry(p.status)).replace(/^\uFEFF/, ''));
+    } catch (err) {
+      throw new Error(err.code === 'ENOENT'
+        ? `No candles from MT5 yet (${p.status} is missing). In MT5, attach the GoldSMCExport expert to an XAUUSD chart; see live/mt5/README.md`
+        : `Could not read ${p.status}: ${err.message}`);
+    }
+    const nowSec = Math.floor(clock() / 1000);
+    const age = nowSec - (+st.writtenUtc || 0);
+    const maxAge = (+cfg.maxStatusAgeSeconds || 180);
+    if (age > maxAge) {
+      throw new Error(`MT5 has not updated the candles for ${Math.round(age / 60)} min. Is MT5 open with GoldSMCExport running on a chart (smiley face top right)?`);
+    }
+    if (st.connected === false) throw new Error('MetaTrader 5 is open but not connected to the broker');
+    let text;
+    try {
+      text = await readRetry(p.csv);
+    } catch (err) {
+      throw new Error(`Could not read ${p.csv}: ${err.code === 'ENOENT' ? 'the file does not exist yet' : err.message}`);
+    }
+    const off = +st.serverOffsetMinutes || 0;
+    const dst = serverDst(off, nowSec, cfg.dst);
+    let bars = SMC.parseCSV(text, off);
+    bars = toTimeframe(fixServerDst(bars, nowSec, dst), tfMinutes * 60, 'The MT5 export');
+    src.info = { symbol: st.symbol || p.symbol, serverOffsetMinutes: off, dst, file: p.csv, written: st.writtenUtc };
+    return count ? bars.slice(-count) : bars;
   };
   return src;
 }
@@ -283,16 +467,56 @@ function replay(cfg = {}, { tfMinutes = 5, everyMinutes = 5, resumeNow = null, s
   return src;
 }
 
+const NAMES = ['auto', 'mt5file', 'mt5', 'twelvedata', 'yahoo', 'csv', 'replay'];
+
 function create(cfg, opts = {}) {
   const name = cfg.source;
   if (name === 'mt5') return mt5(cfg.mt5, opts);
+  if (name === 'mt5file') return mt5File(cfg.mt5file, opts);
   if (name === 'twelvedata') return twelveData(cfg.twelvedata, opts);
+  if (name === 'yahoo') return yahoo(cfg.yahoo, opts);
   if (name === 'csv') return csvFile(cfg.csv, opts);
   if (name === 'replay') return replay(cfg.replay, opts);
-  throw new Error(`Unknown source "${name}": use mt5, twelvedata, csv or replay`);
+  throw new Error(`Unknown source "${name}": use ${NAMES.join(', ')}`);
+}
+
+/*
+ * source "auto": the first feed that answers, best prices first. MT5 through the expert
+ * advisor, then MT5 through Python, then Twelve Data when there is a key, then Yahoo (no key).
+ * The pick holds until the scanner restarts, so one history never mixes two feeds.
+ * Resolves to {name, source, tried: [{name, ok, why}]}.
+ */
+async function pickAuto(cfg, opts = {}, { probeCount = 20 } = {}) {
+  const tried = [];
+  const files = mt5FilePaths(cfg.mt5file, opts);
+  // a feed that cannot work is skipped without asking it
+  const skip = {
+    mt5file: files && fs.existsSync(files.status) ? null : 'the GoldSMCExport expert has not written any candles',
+    mt5: cfg.auto && cfg.auto.tryPython === false ? 'skipped' : null,
+    twelvedata: cfg.twelvedata && cfg.twelvedata.apiKey ? null : 'no API key',
+    yahoo: null,
+  };
+  for (const name of ['mt5file', 'mt5', 'twelvedata', 'yahoo']) {
+    if (skip[name]) {
+      tried.push({ name, ok: false, why: skip[name] });
+      continue;
+    }
+    let src;
+    try {
+      src = create({ ...cfg, source: name }, opts);
+      const bars = await src.fetchBars({ count: probeCount, now: Math.floor(Date.now() / 1000) });
+      if (!bars.length) throw new Error('no candles');
+      tried.push({ name, ok: true, why: null });
+      return { name, source: src, tried };
+    } catch (err) {
+      tried.push({ name, ok: false, why: err.message });
+    }
+  }
+  return { name: null, source: null, tried };
 }
 
 module.exports = {
-  create, mt5, twelveData, csvFile, replay, parseTwelveData, cleanBars, loadSample, runPython,
-  TD_INTERVAL, MT5_TF,
+  create, pickAuto, mt5, mt5File, mt5FilePaths, mt5CommonDir, twelveData, yahoo, csvFile, replay,
+  parseTwelveData, parseYahoo, cleanBars, loadSample, runPython, serverDst, fixServerDst,
+  TD_INTERVAL, MT5_TF, YH_INTERVAL, NAMES,
 };

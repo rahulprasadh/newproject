@@ -63,6 +63,7 @@
     htfFilter: false,    // only take setups in the direction of the HTF trend
     minSweepAtr: 0,      // the wick has to go at least this many ATRs past the level
     requireDiscount: false, // buy OB in the lower half of the range, sell OB in the upper half
+    minGrade: 'C',       // drop armed setups graded below this: 'A+', 'A', 'B' or 'C' (= keep all)
   };
 
   // Sessions in New York time, minutes after midnight [start, end).
@@ -106,6 +107,44 @@
   }
 
   const sessionOf = t => nyTime(t).session;
+
+  /*
+   * Gold (XAUUSD) trades from Sunday 18:00 to Friday 17:00 New York time, with a daily break
+   * from 17:00 to 18:00. Brokers differ by a few minutes. Returns {open, opensAt}: opensAt is
+   * the next opening time when closed (unix s), else null.
+   */
+  function closedAt(t) {
+    const ny = nyTime(t);
+    return ny.weekday === 6 || ny.hour === 17 || (ny.weekday === 5 && ny.hour >= 17) || (ny.weekday === 0 && ny.hour < 18);
+  }
+  function marketStatus(t) {
+    if (!closedAt(t)) return { open: true, opensAt: null };
+    let x = Math.floor(t / 300) * 300 + 300;
+    for (let k = 0; k < 1000 && closedAt(x); k++) x += 300;
+    return { open: false, opensAt: x };
+  }
+
+  /*
+   * How many confluences an armed setup has. Every factor is known when the zones are marked,
+   * so the grade never uses later candles. The volume factor only counts when the data has volume.
+   */
+  const GRADES = ['C', 'B', 'A', 'A+'];
+  function gradeOf(s, { hasVolume = true, htf = true, volGood = 2 } = {}) {
+    const factors = [
+      { key: 'liquidity', label: `Key liquidity (${s.label})`, ok: s.src !== 'swing' },
+      { key: 'killzone', label: 'London or NY session', ok: s.session === 'london' || s.session === 'ny' },
+      { key: 'pd', label: s.dir === 'bull' ? 'OB in discount' : 'OB in premium', ok: s.obPd !== null && s.obPd <= 0.5 },
+    ];
+    if (htf) factors.push({ key: 'trend', label: 'With the higher-timeframe trend', ok: !!s.aligned });
+    if (hasVolume) {
+      const vx = s.disp && s.disp.volX;
+      factors.push({ key: 'volume', label: `Volume ${volGood}× average or more (${Number.isFinite(vx) ? vx.toFixed(1) : '?'}×)`, ok: vx >= volGood });
+    }
+    const score = factors.filter(f => f.ok).length, share = score / factors.length;
+    const grade = share >= 0.999 ? 'A+' : share >= 0.75 ? 'A' : share >= 0.5 ? 'B' : 'C';
+    return { grade, score, of: factors.length, factors };
+  }
+  const gradeRank = g => Math.max(0, GRADES.indexOf(g));
 
   function isPivot(B, p, len, key) {
     const v = B[p][key], high = key === 'h';
@@ -435,6 +474,7 @@
         extreme: bull ? b.l : b.h,
         sweepAt: i, chochAt: null, armedAt: null, touchAt: null,
         disp: null, fvgZone: null, obZone: null, obPd: null, entry: null,
+        grade: null, score: null, scoreOf: null, factors: null,
         endAt: null, reason: null,
       };
       this.setups.push(s);
@@ -550,10 +590,17 @@
       s.obPd = span > 0 ? (bull ? mid - s.extreme : s.extreme - mid) / span : null;
       s.stage = 'armed';
       s.armedAt = i;
-      out.push({ type: 'disp', dir: s.dir, i: best.d, at: i, volX: best.volX, setupId: s.id });
+      const g = gradeOf(s, { hasVolume: this.hasVolume, htf: o.htfMinutes > 0 });
+      s.grade = g.grade;
+      s.score = g.score;
+      s.scoreOf = g.of;
+      s.factors = g.factors;
+      out.push({ type: 'disp', dir: s.dir, i: best.d, at: i, volX: best.volX, setupId: s.id, grade: g.grade });
       out.push(s.fvgZone, s.obZone);
       if (o.requireDiscount && !(s.obPd <= 0.5)) {
         this._finish(s, i, bull ? 'order block not in discount' : 'order block not in premium');
+      } else if (gradeRank(s.grade) < gradeRank(o.minGrade)) {
+        this._finish(s, i, `grade ${s.grade} is below the minimum ${o.minGrade}`);
       }
       return true;
     }
@@ -627,7 +674,7 @@
       }
       const e = {
         type: 'entry', dir: s.dir, i, at: i, patternFrom: pat.from, entry, sl, tp, risk, rr,
-        pattern: pat.name, zone: z.kind, setupId: s.id, session: this._ny.session, tpSrc,
+        pattern: pat.name, zone: z.kind, setupId: s.id, session: this._ny.session, tpSrc, grade: s.grade,
         outcome: null, exitAt: null, exitPrice: null, mfeR: 0, maeR: 0,
       };
       out.push(e);
@@ -645,9 +692,11 @@
       const tally = keys => Object.fromEntries(keys.map(k => [k, { entries: 0, wins: 0, losses: 0 }]));
       const bySession = tally(['asia', 'london', 'ny', 'off']);
       const bySrc = tally(Object.keys(RANK));
+      const byGrade = tally(GRADES.slice().reverse());
       for (const s of S) {
         if (!s.entry) continue;
-        for (const t of [bySession[s.entry.session], bySrc[s.src]]) {
+        for (const t of [bySession[s.entry.session], bySrc[s.src], byGrade[s.grade]]) {
+          if (!t) continue;
           t.entries++;
           if (s.entry.outcome === 'win') t.wins++;
           if (s.entry.outcome === 'loss') t.losses++;
@@ -658,7 +707,7 @@
         entries: entries.length, wins, losses, open: entries.length - wins - losses,
         winRate: wins + losses ? wins / (wins + losses) : null,
         netR: entries.reduce((r, e) => r + (e.outcome === 'win' ? e.rr : e.outcome === 'loss' ? -1 : 0), 0),
-        bySession, bySrc,
+        bySession, bySrc, byGrade,
       };
     }
   }
@@ -764,5 +813,8 @@
     return bars.filter((b, k) => k === 0 || b.t !== bars[k - 1].t);
   }
 
-  return { Engine, DEFAULTS, SESSIONS, run, resample, detectTimeframe, parseCSV, nyTime, sessionOf };
+  return {
+    Engine, DEFAULTS, SESSIONS, GRADES, run, resample, detectTimeframe, parseCSV, nyTime, sessionOf,
+    marketStatus, gradeOf,
+  };
 }));

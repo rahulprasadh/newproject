@@ -10,9 +10,11 @@ This repo gives Claude Code two things when you open it:
    [meta-trader-mcp](https://github.com/shubhvisputek/meta-trader-mcp) 1.2.2:
    quotes, candles, account info, positions, technical analysis and backtests
    from your own MT5 terminal.
-3. **Gold SMC Scanner** in `smc-scanner/`: a chart page that marks the
-   liquidity sweep → CHoCH → volume candle (FVG / IFVG) → order block entry
-   setup on XAUUSD 5m/15m history, with replay alerts. See
+3. **Gold SMC Scanner** in `smc-scanner/`: marks the liquidity sweep → CHoCH →
+   volume candle (FVG / IFVG) → order block entry setup on XAUUSD 5m/15m,
+   grades each setup, and alerts you live (browser and Telegram) with lot size,
+   news warnings and a next-move forecast. On Windows, double-click
+   `smc-scanner\start.bat`: no installs or admin rights needed. See
    `smc-scanner/README.md`.
 
 ## Setup

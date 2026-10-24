@@ -13,6 +13,8 @@ const sources = require('../live/sources.js');
 const alerts = require('../live/alerts.js');
 
 const LIVE = path.join(__dirname, '..', 'live');
+// python3 on Linux and macOS, python on Windows; PYTHON overrides
+const PY = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 const HELPER = path.join(LIVE, 'mt5_bars.py');
 const OPTS = { spread: 0.25 };
 
@@ -242,7 +244,7 @@ test('a failed fetch is retried once after 60 s, then checks go back to the alig
   };
   const cfg = runner.loadConfig(null, { source: 'csv' });
   const log = quiet();
-  const S = new runner.LiveScanner(cfg, { dataDir: tmpdir(), source, notifier: collector(), log, clock: () => now });
+  const S = new runner.LiveScanner(cfg, { dataDir: tmpdir(), source, notifier: collector(), log, clock: () => now, news: null });
   const settle = () => new Promise(r => setImmediate(r));
   const done = S.run({ cycles: 3 });
   await settle();
@@ -272,7 +274,7 @@ test('a feed that is seconds late with the candle that just closed is asked once
     const calls = [];
     const source = { name, lastNow: null, info: {}, fetchBars: async () => answers[Math.min(calls.push(1), answers.length) - 1] };
     const S = new runner.LiveScanner(runner.loadConfig(null, { source: 'csv' }), {
-      dataDir: tmpdir(), source, notifier: collector(), log: quiet(), clock: () => now * 1000,
+      dataDir: tmpdir(), source, notifier: collector(), log: quiet(), clock: () => now * 1000, news: null,
       lateRetryMs: 20000, sleep: async ms => { calls.push(`slept ${ms}`); },
     });
     const r = await S.cycle();
@@ -292,7 +294,7 @@ test('checks never overlap', async () => {
   let release;
   const gate = new Promise(r => { release = r; });
   const source = { name: 'csv', lastNow: null, info: {}, fetchBars: async () => { await gate; return sample().slice(0, 300); } };
-  const S = new runner.LiveScanner(runner.loadConfig(null, { source: 'csv' }), { dataDir: tmpdir(), source, notifier: collector(), log: quiet() });
+  const S = new runner.LiveScanner(runner.loadConfig(null, { source: 'csv' }), { dataDir: tmpdir(), source, notifier: collector(), log: quiet(), news: null });
   const first = S.cycle();
   const second = await S.cycle();
   assert.equal(second.skipped, true);
@@ -421,7 +423,7 @@ function helper(args, fake) {
   const env = { ...process.env };
   if (fake) env.MT5_FAKE = fake;
   else delete env.MT5_FAKE;
-  const r = spawnSync('python3', ['-I', HELPER, ...args], { env, encoding: 'utf8', timeout: 30000 });
+  const r = spawnSync(PY, ['-I', HELPER, ...args], { env, encoding: 'utf8', timeout: 30000 });
   return { code: r.status, out: JSON.parse(r.stdout.trim()), err: r.stderr };
 }
 
@@ -471,17 +473,17 @@ test('MT5 helper converts server time to UTC with the measured offset (python3 -
   assert.deepEqual(r.out.bars, []);
 
   // through the Node adapter, which remembers the measured offset for when the market closes
-  const src = sources.mt5({ python: 'python3', pythonArgs: ['-I'], symbol: 'XAUUSD' }, { tfMinutes: 5, env: { ...process.env, MT5_FAKE: live } });
+  const src = sources.mt5({ python: PY, pythonArgs: ['-I'], symbol: 'XAUUSD' }, { tfMinutes: 5, env: { ...process.env, MT5_FAKE: live } });
   const bars = await src.fetchBars({ count: 3 });
   assert.deepEqual(bars.map(b => b.t), [t0 - 600, t0 - 300, t0]);
   assert.equal(src.lastNow, now);
   assert.equal(src.knownOffset, 180);
   assert.equal(runner.closedOnly(bars, 300, src.lastNow).length, 2);
-  const later = sources.mt5({ python: 'python3', pythonArgs: ['-I'] }, { tfMinutes: 5, knownOffset: 180, env: { ...process.env, MT5_FAKE: closed } });
+  const later = sources.mt5({ python: PY, pythonArgs: ['-I'] }, { tfMinutes: 5, knownOffset: 180, env: { ...process.env, MT5_FAKE: closed } });
   const kept = await later.fetchBars({ count: 3 });
   assert.equal(later.info.offsetSource, 'fallback');
   assert.equal(kept[2].t, t0);
-  const broken = sources.mt5({ python: 'python3', pythonArgs: ['-I'] }, { tfMinutes: 5, env: { ...process.env, MT5_FAKE: fixture(dir, 'x.json', { now, rates, connected: false }) } });
+  const broken = sources.mt5({ python: PY, pythonArgs: ['-I'] }, { tfMinutes: 5, env: { ...process.env, MT5_FAKE: fixture(dir, 'x.json', { now, rates, connected: false }) } });
   await assert.rejects(broken.fetchBars({ count: 3 }), /not connected/);
   const noPython = sources.mt5({ python: 'no-such-python-here' }, { tfMinutes: 5 });
   await assert.rejects(noPython.fetchBars({ count: 3 }), /Python was not found/);
@@ -503,7 +505,9 @@ test('CSV source re-reads the file and builds 5m from 1m candles', async () => {
 
 test('config: the example parses, notes are ignored, command-line options win', () => {
   const cfg = runner.loadConfig(path.join(LIVE, 'config.example.json'));
-  assert.equal(cfg.source, 'mt5');
+  assert.equal(cfg.source, 'auto');
+  assert.equal(cfg.risk.balance, 0);
+  assert.equal(cfg.news.enabled, true);
   assert.equal(cfg.engine.spread, 0.25);
   assert.deepEqual(cfg.timeframes, [5, 15]);
   assert.equal(cfg.alerts.on, 'entry');
@@ -665,7 +669,13 @@ test('replay end to end: an entry is alerted once, a restart does not repeat it,
     assert.match(page.headers['content-type'], /^text\/html/);
     assert.ok(page.body.startsWith(runner.PAGE_HEAD));
     assert.ok(page.body.endsWith(runner.PAGE_TAIL));
-    assert.ok(page.body.includes(fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8')));
+    // the same page, with the chart library from vendor/ instead of the CDN
+    const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    assert.ok(runner.CDN_LWC.test(html), 'index.html loads the chart library from the CDN');
+    assert.ok(page.body.includes(html.replace(runner.CDN_LWC, 'vendor/lightweight-charts.standalone.production.js')));
+    const lib = await get(port, '/vendor/lightweight-charts.standalone.production.js');
+    assert.equal(lib.status, 200);
+    assert.match(lib.body, /TradingView Lightweight Charts/);
     const js = await get(port, '/engine.js');
     assert.equal(js.status, 200);
     assert.match(js.headers['content-type'], /^text\/javascript/);

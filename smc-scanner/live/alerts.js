@@ -60,8 +60,62 @@ function oddsLine(odds, what) {
   return `${what}: ${Math.round(w.p * w.n)} of ${w.n} won (${pct(w.p)})`;
 }
 
+/*
+ * Lot size for a trade from the account size and the risk per trade. XAUUSD: 1 lot = 100 oz,
+ * so a $1 move is $100 a lot. risk = {balance, percent, currency, usdRate (account currency per
+ * 1 USD), contractSize, minLot, lotStep}. Returns null when no balance is set.
+ */
+function positionSize(entry, sl, risk) {
+  if (!risk || !(+risk.balance > 0) || !(+risk.percent > 0)) return null;
+  const contract = +risk.contractSize || 100, step = +risk.lotStep || 0.01, minLot = +risk.minLot || 0.01;
+  const rate = +risk.usdRate > 0 ? +risk.usdRate : 1;
+  const perLot = Math.abs(entry - sl) * contract * rate;        // account money lost per lot at the stop
+  if (!(perLot > 0)) return null;
+  const budget = +risk.balance * +risk.percent / 100;
+  const lots = Math.floor(budget / perLot / step + 1e-9) * step;
+  const dp = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+  const round = x => +x.toFixed(dp);
+  return {
+    lots: round(lots), tooSmall: lots < minLot - 1e-9, minLot, budget, perLot,
+    riskAmount: Math.max(lots, 0) * perLot, minLotRisk: minLot * perLot, currency: risk.currency || 'USD',
+    percent: +risk.percent, balance: +risk.balance,
+  };
+}
+
+function money(x, currency = 'USD') {
+  const sym = { USD: '$', INR: '₹', EUR: '€', GBP: '£', AED: 'AED ' }[String(currency).toUpperCase()];
+  const digits = Math.abs(x) < 100 ? 2 : 0;
+  const n = (+x).toLocaleString(String(currency).toUpperCase() === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return sym ? `${sym}${n}` : `${n} ${currency}`;
+}
+
+function sizeLine(e, risk) {
+  const z = e && positionSize(e.entry, e.sl, risk);
+  if (!z) return null;
+  if (z.tooSmall) {
+    return `Size: ${z.percent}% of ${money(z.balance, z.currency)} is less than ${z.minLot} lot here (${z.minLot} lot risks ${money(z.minLotRisk, z.currency)})`;
+  }
+  return `Size: ${z.lots} lot risks ${money(z.riskAmount, z.currency)} (${z.percent}% of ${money(z.balance, z.currency)})`;
+}
+
+function newsLine(list, timeZone) {
+  if (!list || !list.length) return null;
+  const parts = list.slice(0, 3).map(n => {
+    const when = n.minutes > 0 ? `in ${n.minutes} min` : n.minutes === 0 ? 'now' : `${-n.minutes} min ago`;
+    return `${n.country} ${n.title} ${when} (${clock(n.t, timeZone)})`;
+  });
+  return `⚠ High-impact news: ${parts.join('; ')}`;
+}
+
 const sideOf = dir => (dir === 'bull' ? 'BUY' : 'SELL');
 const wordOf = dir => (dir === 'bull' ? 'buy' : 'sell');
+
+// "Confluence 3/5: Key liquidity (PDL), London or NY session, Volume 2× average or more (2.3×)"
+function gradeLine(s) {
+  if (!s || !s.factors || !s.factors.length) return null;
+  const met = s.factors.filter(f => f.ok).map(f => f.label);
+  return `Confluence ${met.length}/${s.factors.length}${met.length ? ': ' + met.join(', ') : ''}`;
+}
 
 function story(a) {
   const s = a.setup, tz = a.timeZone, parts = [`Swept ${s.label || 'liquidity'} ${price(s.levelPrice)} at ${clock(s.sweepT, tz)}`];
@@ -81,9 +135,12 @@ function message(a) {
   switch (a.kind) {
     case 'entry': {
       const tpNote = e.tpSrc && e.tpSrc !== 'rr' ? ` at ${e.tpSrc}` : '';
-      lines.push(`${head} ${sideOf(e.dir)} signal · ${e.pattern} at ${e.zone}`);
+      lines.push(`${head} ${sideOf(e.dir)} signal · ${e.pattern} at ${e.zone}${e.grade ? ` · grade ${e.grade}` : ''}`);
       lines.push(`Entry ${price(e.entry)}  SL ${price(e.sl)}  TP ${price(e.tp)} (${rText(e.rr)}${tpNote})`);
+      lines.push(sizeLine(e, a.risk));
       lines.push(story(a));
+      lines.push(gradeLine(s));
+      lines.push(newsLine(a.news, tz));
       lines.push(nextMove(a.forecast), oddsLine(a.odds, `Past ${wordOf(e.dir)} entries`));
       break;
     }
@@ -100,9 +157,11 @@ function message(a) {
       break;
     case 'armed': {
       const vol = Number.isFinite(s.volX) ? ` · volume ${s.volX.toFixed(1)}x` : '';
-      lines.push(`${head} ${sideOf(a.dir)} zones marked at ${clock(a.t, tz)}`);
+      lines.push(`${head} ${sideOf(a.dir)} zones marked at ${clock(a.t, tz)}${s.grade ? ` · grade ${s.grade}` : ''}`);
       lines.push(`OB ${price(s.ob.bottom)} – ${price(s.ob.top)} · ${s.fvgKind} ${price(s.fvg.bottom)} – ${price(s.fvg.top)}${vol}`);
       lines.push(`Wait for a pin bar or head & shoulders at the ${a.entryZone === 'fvg' ? s.fvgKind : 'OB'}`);
+      lines.push(gradeLine(s));
+      lines.push(newsLine(a.news, tz));
       lines.push(oddsLine(a.odds, `Past armed ${wordOf(a.dir)} setups`));
       break;
     }
@@ -182,9 +241,9 @@ function createNotifier(cfg = {}, { log = console.log, write = s => process.stdo
   };
   return {
     telegramEnabled: !!(tg.botToken && tg.chatId),
-    async send(alert) {
+    async send(alert, { console: toConsole = true } = {}) {
       const out = { console: false, telegram: null };
-      if (cfg.console !== false) {
+      if (cfg.console !== false && toConsole) {
         try {
           write(consoleText(alert, { color, bell: cfg.bell !== false && tty, timeZone: cfg.timeZone }));
           out.console = true;
@@ -209,5 +268,5 @@ function createNotifier(cfg = {}, { log = console.log, write = s => process.stdo
 
 module.exports = {
   message, nextMove, liquidityLine, oddsLine, consoleText, sendTelegram, createNotifier,
-  clock, dateTime, price, hide,
+  clock, dateTime, price, hide, positionSize, sizeLine, newsLine, gradeLine, money,
 };
