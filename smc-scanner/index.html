@@ -129,8 +129,8 @@ select.sel { border: 1px solid var(--line); background: var(--raised); border-ra
 .side { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
 .tabs button {
-  flex: 1; border: 0; background: transparent; padding: 10px 6px 9px; color: var(--muted);
-  font: 600 14px var(--font-label); letter-spacing: .06em; text-transform: uppercase; border-bottom: 2px solid transparent;
+  flex: 1; border: 0; background: transparent; padding: 10px 4px 9px; color: var(--muted);
+  font: 600 13.5px var(--font-label); letter-spacing: .04em; text-transform: uppercase; border-bottom: 2px solid transparent;
 }
 .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--gold); }
 .pane { padding: 12px; display: grid; gap: 14px; max-height: calc(66vh + 60px); overflow-y: auto; }
@@ -263,6 +263,41 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 .result.bad { color: var(--bear); }
 .chats { display: flex; flex-wrap: wrap; gap: 6px; }
 .saverow { position: sticky; bottom: -12px; background: var(--surface); padding: 10px 0 2px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line); }
+/* trade plan */
+.plan { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
+.plan header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; }
+.verdict { font: 700 20px/1.15 var(--font-label); letter-spacing: .02em; padding: 7px 10px; border-radius: 6px; background: var(--raised); color: var(--fg); }
+.verdict.buy { background: var(--bull); color: var(--surface); }
+.verdict.sell { background: var(--bear); color: var(--surface); }
+.verdict.hold { background: transparent; border: 2px solid var(--gold); color: var(--fg); }
+.vdetail { margin: 0; font-size: 13.5px; }
+.sideplan { display: grid; gap: 4px; padding: 7px 9px; border-radius: 6px; background: var(--raised); font-size: 13px; }
+.sideplan > b { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform: uppercase; color: var(--c); }
+.sideplan .stg { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; font-family: var(--font-ui); }
+.sideplan ol { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 1px; }
+.sideplan p { margin: 0; }
+.sideplan .lv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.sideplan .lv span { background: var(--surface); border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+.sideplan .lv small { display: block; font: 600 10.5px var(--font-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.plan ul.scen { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
+.warn { margin: 0; font-size: 12.5px; color: var(--bear); }
+
+/* candlestick patterns */
+.ptable { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 0; font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.ptable > * { padding: 4px 6px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.ptable .h { font: 600 11px var(--font-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); background: var(--raised); }
+.ptable button { all: unset; cursor: pointer; display: contents; }
+.ptable .r { text-align: right; font-family: var(--font-num); }
+.ptable .nm i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--c); }
+.ptable .sel { background: color-mix(in srgb, var(--gold) 12%, var(--surface)); }
+.vb { font: 600 11px var(--font-label); letter-spacing: .05em; text-transform: uppercase; border-radius: 4px; padding: 0 5px; }
+.vb.better { color: var(--surface); background: var(--bull); }
+.vb.worse { color: var(--surface); background: var(--bear); }
+.vb.same { color: var(--muted); border: 1px solid var(--line); }
+.cnow { display: grid; gap: 6px; }
+.cnow .pc { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 6px; padding: 6px 9px; font-size: 13px; }
+.cnow .pc b { font-weight: 600; }
+
 .chartmsg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; }
 </style>
 
@@ -352,11 +387,13 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
     <aside class="side">
       <div class="tabs" role="tablist">
         <button type="button" role="tab" id="tabSignals" aria-selected="true" aria-controls="paneSignals">Signals</button>
+        <button type="button" role="tab" id="tabPatterns" aria-selected="false" aria-controls="panePatterns">Patterns</button>
         <button type="button" role="tab" id="tabSettings" aria-selected="false" aria-controls="paneSettings">Settings</button>
         <button type="button" role="tab" id="tabSetup" aria-selected="false" aria-controls="paneSetup" hidden>Setup</button>
         <button type="button" role="tab" id="tabRules" aria-selected="false" aria-controls="paneRules">Rules</button>
       </div>
       <div class="pane" id="paneSignals" role="tabpanel">
+        <section class="plan" id="plan" aria-label="Trade plan"></section>
         <section class="newsbox" id="newsBox" aria-label="High-impact news" hidden></section>
         <section class="next" id="next" aria-label="Next move forecast"></section>
         <div class="detail" id="detail" hidden></div>
@@ -381,6 +418,23 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
           <div class="list" id="misses" hidden></div>
         </section>
       </div>
+      <div class="pane" id="panePatterns" role="tabpanel" hidden>
+        <section class="cnow" id="candlesNow" aria-label="Patterns on the latest candles"></section>
+        <div class="row2">
+          <label class="check">Count
+            <select class="sel" id="patCtx">
+              <option value="all">Everywhere</option><option value="extreme">At a 20-candle low/high</option>
+              <option value="volume">With volume 1.5× or more</option><option value="zone">Inside an SMC zone</option>
+            </select>
+          </label>
+          <label class="check">Judge after
+            <select class="sel" id="patH"><option value="3">3 candles</option><option value="6">6 candles</option><option value="12">12 candles</option></select>
+          </label>
+        </div>
+        <div class="ptable" id="patTable" role="table" aria-label="How each pattern did"></div>
+        <div class="detail" id="patDetail" hidden></div>
+        <p class="hint" id="patNote"></p>
+      </div>
       <div class="pane" id="paneSettings" role="tabpanel" hidden>
         <p class="hint" id="liveSetNote" hidden>Live mode shows the scanner's own results. These settings apply to History and Replay; to use them in the live scanner, open Setup → Strategy.</p>
         <form class="form" id="settings" onsubmit="return false"></form>
@@ -402,7 +456,9 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="candles.js"></script>
 <script src="engine.js"></script>
+<script src="advisor.js"></script>
 <script src="predict.js"></script>
 <script src="data/sample.js"></script>
 <script>
@@ -411,7 +467,8 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 const $ = s => document.querySelector(s);
 const LWC = window.LightweightCharts;
 const SP = window.SMCPredict;
-if (!LWC || !window.SMC || !SP) {
+const CS = window.SMCCandles, ADV = window.SMCAdvisor;
+if (!LWC || !window.SMC || !SP || !CS || !ADV) {
   // without the chart library (no internet, a blocked CDN) say so instead of showing a blank page
   $('#chart').innerHTML = '<div class="chartmsg"><p>The chart library could not load, so the chart cannot be drawn.<br>Check the internet connection and reload. Started with <b>start.bat</b>, the scanner serves its own copy, so open <b>http://localhost:8787</b> instead of this file.</p></div>';
   $('#src').textContent = 'Chart library missing';
@@ -426,7 +483,8 @@ const store = {
 const LAYERS = [
   ['liq', 'Liquidity', '--liq'], ['sweep', 'Sweeps', '--liq'], ['choch', 'CHoCH', '--fg'],
   ['vol', 'Volume candle', '--gold'], ['fvg', 'FVG / IFVG', '--fvg'], ['ob', 'Order block', '--ob'],
-  ['trade', 'Entries', '--bull'], ['next', 'Next move', '--gold'], ['misses', 'Stopped setups', '--muted'],
+  ['trade', 'Entries', '--bull'], ['next', 'Next move', '--gold'], ['cndl', 'Candle patterns', '--fvg'],
+  ['misses', 'Stopped setups', '--muted'],
 ];
 // XAUUSD starting point: the engine defaults plus a typical gold spread
 const PRESET = {
@@ -466,7 +524,7 @@ const gradeBadge = g => (g ? `<span class="grade g${g}" title="Setup grade from 
 const state = {
   base: null, tf: 300, bars: [], eng: null, byId: new Map(),
   opts: withPreset(store.get('opts', {})),
-  layers: { liq: true, sweep: true, choch: true, vol: true, fvg: true, ob: true, trade: true, next: true, misses: false, ...store.get('layers', {}) },
+  layers: { liq: true, sweep: true, choch: true, vol: true, fvg: true, ob: true, trade: true, next: true, cndl: false, misses: false, ...store.get('layers', {}) },
   mode: 'history', cursor: 0, playing: false, selected: null, tz: store.get('tz', 'local'),
   wf: null, fc: null, trainMsg: '', liveData: null, liveTf: null,
 };
@@ -758,7 +816,14 @@ const sideLabel = s => s.label || (s.dir === 'bull' ? 'SSL' : 'BSL');
 function drawOverlays() {
   const c = state.cursor, L = state.layers, B = state.bars, items = [], marks = [];
   if (!B.length || !state.eng) return;
-  const shortPat = p => ({ 'Pin bar': 'Pin', 'Head & shoulders': 'H&S', 'Three pins': '3 pins', Engulfing: 'Engulf' }[p] || p);
+  const shortPat = p => ({
+    'Pin bar': 'Pin', 'Head & shoulders': 'H&S', 'Three pins': '3 pins', Engulfing: 'Engulf', 'Morning star': 'M.star',
+    'Evening star': 'E.star', 'Morning doji star': 'M.star', 'Evening doji star': 'E.star', 'Piercing line': 'Pierce',
+    'Dark cloud cover': 'D.cloud', 'Tweezer bottom': 'Tweezer', 'Tweezer top': 'Tweezer', 'Bullish harami': 'Harami',
+    'Bearish harami': 'Harami', 'Bullish harami cross': 'Harami', 'Bearish harami cross': 'Harami',
+    'Three inside up': '3 inside', 'Three inside down': '3 inside', 'Three outside up': '3 outside',
+    'Three outside down': '3 outside', 'Dragonfly doji': 'Doji', 'Gravestone doji': 'Doji',
+  }[p] || p);
   if (L.liq) {
     for (const lv of state.liq) {
       if (lv.at > c || (lv.endAt !== null && lv.endAt <= c)) continue;
@@ -808,14 +873,199 @@ function drawOverlays() {
     if (q.above) items.push({ kind: 'line', i1: c + 1, i2: c + 15, price: q.above.price, color: P.bull, dot: true, width: 2, label: `BSL ${pA !== null ? pct(pA) : ''}`.trim() });
     if (q.below) items.push({ kind: 'line', i1: c + 1, i2: c + 15, price: q.below.price, color: P.bear, dot: true, width: 2, below: true, label: `SSL ${pA !== null ? pct(1 - pA) : ''}`.trim() });
   }
+  // candlestick patterns: the strong ones near the cursor, or every one of the pattern picked in the Patterns tab
+  if (L.cndl || pat.sel) {
+    const P0 = patData();
+    const show = pat.sel ? P0.hits.filter(h => h.key === pat.sel && h.i <= c).slice(-400)
+      : P0.hits.filter(h => h.i <= c && h.i > c - 600 && h.stars >= 2 && h.dir !== 'neutral');
+    for (const h of show) {
+      const bull = h.dir === 'bull';
+      marks.push({
+        time: B[h.i].t, position: bull ? 'belowBar' : 'aboveBar', shape: 'circle', size: 0.6,
+        color: h.dir === 'neutral' ? P.muted : bull ? P.fvg : P.ob, text: PAT_SHORT[h.key] || h.name,
+      });
+    }
+  }
   marks.sort((x, y) => x.time - y.time);
   candles.setMarkers(marks);
   overlay.setItems(items);
 }
 
+// ---------- candlestick patterns ----------
+const PAT_SHORT = {
+  hammer: 'Hammer', invertedHammer: 'Inv hammer', hangingMan: 'Hanging', shootingStar: 'Shooting', dragonflyDoji: 'Dragonfly',
+  gravestoneDoji: 'Gravestone', longLeggedDoji: 'LL doji', doji: 'Doji', spinningTop: 'Spin', bullMarubozu: 'Marubozu',
+  bearMarubozu: 'Marubozu', bullPin: 'Pin', bearPin: 'Pin', bullEngulfing: 'Engulf', bearEngulfing: 'Engulf',
+  bullHarami: 'Harami', bearHarami: 'Harami', bullHaramiCross: 'H-cross', bearHaramiCross: 'H-cross', piercing: 'Piercing',
+  darkCloud: 'Dark cloud', tweezerBottom: 'Tweezer', tweezerTop: 'Tweezer', bullKicker: 'Kicker', bearKicker: 'Kicker',
+  morningStar: 'M.star', eveningStar: 'E.star', morningDojiStar: 'M.doji star', eveningDojiStar: 'E.doji star',
+  threeWhiteSoldiers: '3 soldiers', threeBlackCrows: '3 crows', threeInsideUp: '3 in up', threeInsideDown: '3 in down',
+  threeOutsideUp: '3 out up', threeOutsideDown: '3 out down', bullThreePins: '3 pins', bearThreePins: '3 pins',
+  invHeadShoulders: 'iH&S', headShoulders: 'H&S',
+};
+const pat = { bars: null, atr: null, vol: null, hits: [], byI: new Map(), stats: null, statsKey: '', sel: null,
+  ctx: store.get('patCtx', 'all'), h: +store.get('patH', 6) || 6 };
+// patterns on the loaded candles, found once per data set (every pattern only reads candles up to its own)
+function patData() {
+  if (pat.bars !== state.bars) {
+    pat.bars = state.bars;
+    pat.atr = CS.atrSeries(state.bars);
+    pat.vol = CS.volSeries(state.bars);
+    pat.hits = state.bars.length ? CS.detectAll(state.bars, { atr: pat.atr, vol: pat.vol }) : [];
+    pat.byI = new Map();
+    for (const h of pat.hits) {
+      if (!pat.byI.has(h.i)) pat.byI.set(h.i, []);
+      pat.byI.get(h.i).push(h);
+    }
+  }
+  return pat;
+}
+// true when the pattern's last candle trades inside a marked SMC zone of the same direction
+function zoneFilter() {
+  const iv = [];
+  for (const s of state.eng.setups) {
+    if (s.armedAt === null || s.armedAt === undefined || !s.obZone) continue;
+    const end = s.entry ? s.entry.i : s.endAt !== null && s.endAt !== undefined ? s.endAt : state.bars.length - 1;
+    const zs = [s.obZone, s.fvgZone].filter(Boolean);
+    iv.push({ dir: s.dir, from: s.armedAt + 1, to: end, top: Math.max(...zs.map(z => z.top)), bottom: Math.min(...zs.map(z => z.bottom)) });
+  }
+  return h => iv.some(z => z.dir === h.dir && h.i >= z.from && h.i <= z.to && state.bars[h.i].l <= z.top && state.bars[h.i].h >= z.bottom);
+}
+/*
+ * How each pattern did. In replay only candles up to the cursor count (updated once a day of
+ * candles, or when paused). In Live the scanner sends the numbers for its whole history.
+ */
+function patStats(force) {
+  const P0 = patData(), c = state.cursor, live = state.mode === 'live';
+  const server = live && state.liveTf && state.liveTf.patternStats;
+  if (server && pat.ctx === 'all') return { ...server, source: 'scanner' };
+  if (!state.bars.length || !state.eng) return null;
+  const cut = state.mode === 'replay' ? Math.max(0, Math.floor(c / 288) * 288 - 1) : state.bars.length - 1;
+  const key = `${state.mode}|${state.tf}|${pat.ctx}|${cut}|${state.bars.length}|${state.eng.setups.length}`;
+  if (pat.stats && pat.statsKey === key) return pat.stats;
+  if (!force && state.playing && pat.stats) return pat.stats;
+  const B = cut < state.bars.length - 1 ? state.bars.slice(0, cut + 1) : state.bars;
+  const filter = { all: null, extreme: h => h.extreme, volume: h => h.volX >= 1.5, zone: zoneFilter() }[pat.ctx];
+  const ev = CS.evaluate(B, P0.hits.filter(h => h.i <= cut), { atr: P0.atr, filter });
+  pat.stats = { ...ev, candles: B.length, source: 'page' };
+  pat.statsKey = key;
+  return pat.stats;
+}
+const statRow = (st, key) => st && st.rows ? st.rows.find(r => r.key === key) : null;
+const pctOrDash = p => (p === null || p === undefined ? '–' : pct(p));
+const dirCol = d => (d === 'bull' ? P.bull : d === 'bear' ? P.bear : P.muted);
+const stars = n => '★'.repeat(n || 1);
+function renderPatterns() {
+  if ($('#panePatterns').hidden || !state.bars.length || !state.eng) return;
+  const P0 = patData(), c = state.cursor, st = patStats(true), h = pat.h;
+  // the last three candles
+  const recent = [];
+  for (let k = c; k >= Math.max(0, c - 2); k--) for (const x of P0.byI.get(k) || []) recent.push(x);
+  $('#candlesNow').innerHTML = `<h2>On the last 3 candles · ${tm(state.bars[c].t)}</h2>` + (recent.length ? recent.map(x => {
+    const d = CS.describe(x.key), r = statRow(st, x.key), m = r && r.horizons[h];
+    const rec = m ? ` On this data: ${x.dir === 'bull' ? 'up' : 'down'} ${pct(m.p)} of the time after ${h} candles vs ${pct(m.base)} for any candle (n=${m.n}).` : '';
+    return `<div class="pc" style="--c:${dirCol(x.dir)}"><b>${escapeHtml(x.name)}</b> ${stars(x.stars)} <span class="hint">${tm(state.bars[x.i].t)}${x.volX ? ` · volume ${x.volX.toFixed(1)}×` : ''}</span><br>${escapeHtml(d.meaning)}<span class="hint">${rec}</span></div>`;
+  }).join('') : '<p class="hint">No classic pattern on these candles.</p>');
+  if (!st) { $('#patTable').innerHTML = ''; return; }
+  const rows = st.rows.filter(r => r.n > 0);
+  const dirRows = rows.filter(r => r.dir !== 'neutral').sort((a, b) => b.n - a.n);
+  const neu = rows.filter(r => r.dir === 'neutral').sort((a, b) => b.n - a.n);
+  const head = `<span class="h">Pattern</span><span class="h r">Found</span><span class="h r">Worked</span><span class="h r">vs usual</span>`;
+  const line = r => {
+    const m = r.horizons[h], sel = r.key === pat.sel ? ' sel' : '';
+    const worked = m ? pct(m.p) : '–';
+    const vs = m ? `<span class="vb ${m.verdict}" title="${pct(m.base)} for any candle">${m.verdict === 'same' ? 'no edge' : m.verdict}</span>` : '';
+    return `<button type="button" data-pat="${r.key}"><span class="nm${sel}" style="--c:${dirCol(r.dir)}"><i></i>${escapeHtml(r.name)}</span><span class="r${sel}">${r.n.toLocaleString('en-US')}</span><span class="r${sel}">${worked}</span><span class="r${sel}">${vs}</span></button>`;
+  };
+  const lineN = r => {
+    const sel = r.key === pat.sel ? ' sel' : '';
+    const a = r.absMove[h], b = st.base.absMove[h];
+    return `<button type="button" data-pat="${r.key}"><span class="nm${sel}" style="--c:${P.muted}"><i></i>${escapeHtml(r.name)}</span><span class="r${sel}">${r.n.toLocaleString('en-US')}</span><span class="r${sel}" title="the move that followed, against the usual move">${a && b ? (a / b).toFixed(2) + '×' : '–'}</span><span class="r${sel}">move</span></button>`;
+  };
+  $('#patTable').innerHTML = head + dirRows.map(line).join('') + neu.map(lineN).join('');
+  const better = dirRows.filter(r => r.horizons[h] && r.horizons[h].verdict === 'better').map(r => r.name);
+  const ctxName = { all: 'everywhere', extreme: 'at a 20-candle low or high', volume: 'with volume 1.5× or more', zone: 'inside an SMC zone' }[pat.ctx];
+  $('#patNote').innerHTML = `Counted ${ctxName}, over ${st.candles.toLocaleString('en-US')} ${tfName(state.tf)} candles${st.source === 'scanner' ? ' of the scanner\'s history' : state.mode === 'replay' ? ' up to the replay cursor' : ''}. <b>Worked</b>: the close ${h} candles later was in the pattern's direction. <b>vs usual</b>: against any candle; "better" or "worse" only when the 95% range clears the usual rate and both halves of the data agree. `
+    + (better.length ? `Better here: ${better.map(escapeHtml).join(', ')}.` : 'No pattern beats an ordinary candle on its own here, which is normal for intraday gold: use them as the trigger at a liquidity sweep and order block, not as signals by themselves.');
+  const sel = pat.sel && statRow(st, pat.sel);
+  const box = $('#patDetail');
+  if (!pat.sel) { box.hidden = true; return; }
+  const d = CS.describe(pat.sel);
+  box.hidden = false;
+  const m = sel && sel.horizons[h], t = sel && sel.touch;
+  const lines = [];
+  if (m) {
+    lines.push(`Worked ${pct(m.p)} (95% range ${pct(m.lo)}–${pct(m.hi)}) vs ${pct(m.base)} for any candle, n=${m.n}.`);
+    lines.push(`Average move after ${h} candles: ${m.avgMoveAtr >= 0 ? '+' : ''}${m.avgMoveAtr.toFixed(2)} ATR in the pattern's direction.`);
+    if (m.halves) lines.push(`First half of the data ${pctOrDash(m.halves[0])}, second half ${pctOrDash(m.halves[1])}.`);
+  }
+  if (t) lines.push(`Reached 1 ATR in its direction before 1 ATR against: ${pct(t.p)} vs ${pct(t.base)} for any candle (n=${t.n}).`);
+  if (sel && !m && sel.dir === 'neutral') lines.push(`Found ${sel.n} times. A neutral pattern: it says the market is undecided, not which way it goes next.`);
+  box.innerHTML = `<header><b style="color:${dirCol(d.dir)}">${escapeHtml(d.name)}</b><span class="hint">${d.bars} candle${d.bars > 1 ? 's' : ''} · ${d.type}</span></header>
+    <p class="hint" style="margin:0">${escapeHtml(d.meaning)}</p><p style="margin:0;font-size:13px"><b>Rule.</b> ${escapeHtml(d.rule)} Sizes use the ATR(14) before the pattern; trends are the close ${CS.TREND_LEN} candles earlier, at least ${CS.TREND_ATR} ATR away.</p>
+    ${lines.length ? `<p style="margin:0;font-size:13px">${lines.join(' ')}</p>` : ''}<p class="hint" style="margin:0">Every one is marked on the chart. Click the pattern again to clear.</p>`;
+}
+
+// ---------- trade plan ----------
+function renderPlan() {
+  const box = $('#plan'), c = state.cursor;
+  if (!state.bars.length || !state.eng) { box.innerHTML = '<header><h2>Trade plan</h2></header><p class="hint">Waiting for candles…</p>'; return; }
+  const live = state.mode === 'live', j = state.liveData;
+  const opts = live ? { ...SMC.DEFAULTS, ...((j && j.engine) || {}) } : state.opts;
+  const risk = live && j && j.risk && j.risk.balance > 0 ? j.risk : state.opts.risk;
+  const P0 = patData(), st = patStats(false);
+  const recent = [...(P0.byI.get(c) || [])];
+  let p;
+  try {
+    p = ADV.plan({
+      bars: state.bars, setups: state.eng.setups, levels: state.liq, c, opts, tfSec: state.tf, risk,
+      atr: P0.atr[c], odds: s => oddsFor(s, c), forecast: forecastAt(c), patterns: recent, patternHorizon: pat.h,
+      patternStats: st ? Object.fromEntries(st.rows.map(r => [r.key, r])) : null,
+      price: fmtP, time: t => tm(t),
+    });
+  } catch (e) {
+    box.innerHTML = `<header><h2>Trade plan</h2></header><p class="err">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  const money1 = z => (z ? (z.tooSmall ? `less than ${z.minLot} lot for your risk (${z.minLot} lot risks ${money(z.minAmount, z.currency)})` : `${z.lots} lot risks ${money(z.amount, z.currency)}`) : '');
+  const oddsText = o => (o && o.n >= 10 ? `Past setups that got this far: ${pct(o.p)} won (n=${o.n})${o.evR !== null ? ` → ${o.evR >= 0 ? '+' : ''}${o.evR.toFixed(2)}R expected per trade` : ''}.` : o ? `Only ${o.n} past setups got this far: too few to judge.` : '');
+  const cell = (k, v, col) => `<span><small>${k}</small><b class="num"${col ? ` style="color:${col}"` : ''}>${v}</b></span>`;
+  let tradeHtml = '';
+  if (p.trade) {
+    const t = p.trade;
+    tradeHtml = `<div class="sideplan" style="--c:${t.dir === 'bull' ? P.bull : P.bear}"><div class="lv">${cell('Entry', fmtP(t.entry))}${cell('Stop', fmtP(t.sl), P.bear)}${cell(`Target ${fmtR(t.rr)}R`, fmtP(t.tp), P.bull)}</div>
+      ${t.size ? `<p>Size: ${money1(t.size)}</p>` : ''}${t.odds ? `<p class="hint">${oddsText(t.odds)}</p>` : ''}</div>`;
+  }
+  const sideHtml = side => {
+    const bull = side.dir === 'bull', col = bull ? P.bull : P.bear;
+    const stageName = { none: 'no setup', swept: 'liquidity swept', choch: 'CHoCH done', armed: 'zone ready' }[side.stage];
+    const pr = side.projection;
+    const lv = pr ? `<div class="lv">${cell('Entry ≈', fmtP(pr.entry))}${cell('Stop ≈', fmtP(pr.sl), P.bear)}${cell(`Target ≈ ${fmtR(pr.rr)}R`, fmtP(pr.tp), P.bull)}</div>${pr.size ? `<p>Size: ${money1(pr.size)}</p>` : ''}` : '';
+    return `<div class="sideplan" style="--c:${col}"><b>${bull ? 'Buy' : 'Sell'} <span class="stg">· ${stageName}${side.grade ? ` · grade ${side.grade}` : ''}</span></b>
+      ${side.steps.length ? `<ol>${side.steps.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ol>` : ''}
+      <p><b>Next:</b> ${escapeHtml(side.next)}</p>${side.cancel ? `<p class="hint">Cancelled by ${escapeHtml(side.cancel)}.</p>` : ''}${lv}
+      ${side.odds ? `<p class="hint">${oddsText(side.odds)}</p>` : ''}</div>`;
+  };
+  const vClass = { buy: 'buy', sell: 'sell', hold: 'hold', wait: '' }[p.verdict];
+  const scen = p.scenarios.length ? `<h2>Scenarios</h2><ul class="scen">${p.scenarios.map(x => `<li style="color:${x.dir === 'bull' ? P.bull : P.bear}"><span style="color:var(--fg)">${escapeHtml(x.text)}</span> <span class="conf ${x.confidence}">${x.confidence}</span></li>`).join('')}</ul>` : '';
+  const cnd = p.candles.filter(x => x.dir !== 'neutral').map(x => {
+    const m = x.stat;
+    return `${escapeHtml(x.name)} ${stars(x.stars)}${x.atZone ? ' <b>at the zone</b>' : ''}${m ? ` <span class="hint">(${pct(m.p)} vs ${pct(m.base)} usual, n=${m.n})</span>` : ''}`;
+  });
+  box.innerHTML = `<header><h2>Trade plan</h2><span class="hint">${tfName(state.tf)} · ${tm(p.t)} close · <span class="num">${fmtP(p.price)}</span></span></header>
+    <div class="verdict ${vClass}" role="status">${escapeHtml(p.headline)}</div>
+    ${p.detail ? `<p class="vdetail">${escapeHtml(p.detail)}</p>` : ''}${tradeHtml}
+    ${p.warnings.map(w => `<p class="warn">${escapeHtml(w)}</p>`).join('')}
+    ${sideHtml(p.sides.buy)}${sideHtml(p.sides.sell)}${scen}
+    ${cnd.length ? `<p class="hint" style="margin:0">Last candle: ${cnd.join(', ')}</p>` : ''}
+    <p class="hint" style="margin:0">Rules, not certainty: every number here comes from this chart's own past. ${state.mode === 'replay' ? 'In replay the plan only knows candles up to the cursor.' : ''}</p>`;
+}
+
 // ---------- side panel ----------
 function render() {
   drawOverlays();
+  renderPlan();
+  renderPatterns();
   renderNext();
   renderFunnel();
   renderList();
@@ -1105,7 +1355,7 @@ function alertOf(ev, s, bars, all) {
   const bull = ev.dir === 'bull';
   if (ev.type === 'entry') {
     const tgt = ev.tpSrc && ev.tpSrc !== 'rr' ? ` (${ev.tpSrc})` : '';
-    return [bull ? P.bull : P.bear, `${bull ? 'Buy' : 'Sell'} signal · ${ev.pattern} at ${ev.zone}${ev.grade ? ` · ${ev.grade}` : ''}`,
+    return [bull ? P.bull : P.bear, `${bull ? 'BUY' : 'SELL'} NOW · ${ev.pattern} at ${ev.zone}${ev.grade ? ` · ${ev.grade}` : ''}`,
       `Entry ${fmtP(ev.entry)} · SL ${fmtP(ev.sl)} · TP ${fmtP(ev.tp)}${tgt} · ${tm(bars[ev.at].t)}`, true];
   }
   if (!all) return null;
@@ -1553,6 +1803,7 @@ function showTab(id) {
     $('#' + t.getAttribute('aria-controls')).hidden = t.id !== id;
   }
   if (id === 'tabSetup') setupStatus();
+  if (id === 'tabPatterns') renderPatterns();
 }
 
 // ---------- settings + rules ----------
@@ -1592,6 +1843,13 @@ const FIELDS = [
     ['chk', 'patterns.hs', 'Head & shoulders (3 candles)'],
     ['chk', 'patterns.threePins', 'Three pins in a row'],
     ['chk', 'patterns.engulf', 'Engulfing candle'],
+    ['note', 'More confirmations from the Patterns tab (shape only; the zone is the context):'],
+    ['chk', 'patterns.star', 'Morning / evening star'],
+    ['chk', 'patterns.three', 'Three inside / outside up and down'],
+    ['chk', 'patterns.piercing', 'Piercing line / dark cloud cover'],
+    ['chk', 'patterns.tweezer', 'Tweezer bottom / top'],
+    ['chk', 'patterns.harami', 'Harami / harami cross'],
+    ['chk', 'patterns.doji', 'Dragonfly / gravestone doji'],
     ['num', 'pinWick', 'Pin wick at least (× body)', 1, 6, 0.5],
     ['chk', 'firstTouchOnly', 'Only the first touch of the zone'],
     ['num', 'entryWithin', 'Entry must come within (candles after CHoCH)', 5, 200, 1],
@@ -1663,7 +1921,10 @@ function renderRules() {
   const pats = [o.patterns.pin && `a <b>pin bar</b> (rejection wick at least ${v(o.pinWick + '×')} the body and at least half the candle)`,
     o.patterns.hs && `a <b>head & shoulders</b> (three candles, the middle one reaches deepest into the zone, the third closes back past the middle candle's body)`,
     o.patterns.threePins && `<b>three pins</b> (three rejection candles in a row)`,
-    o.patterns.engulf && `an <b>engulfing</b> candle (its body covers the previous opposite candle's body)`].filter(Boolean);
+    o.patterns.engulf && `an <b>engulfing</b> candle (its body covers the previous opposite candle's body)`,
+    o.patterns.star && `a <b>morning or evening star</b>`, o.patterns.three && `<b>three inside or outside</b> up/down`,
+    o.patterns.piercing && `a <b>piercing line or dark cloud cover</b>`, o.patterns.tweezer && `a <b>tweezer</b> bottom/top`,
+    o.patterns.harami && `a <b>harami</b> (or harami cross)`, o.patterns.doji && `a <b>dragonfly or gravestone doji</b>`].filter(Boolean);
   const src = o.liqSources, srcs = [src.swing && `swing highs and lows (${v(o.liqLen)} candles each side)`,
     src.equal && `equal highs / lows (EQH / EQL, within ${v(o.eqTolAtr + '× ATR')})`, src.prevDay && 'the previous day high and low (PDH / PDL, the day starts 17:00 New York)',
     src.session && 'the Asia, London and New York session highs and lows'].filter(Boolean);
@@ -1680,6 +1941,8 @@ function renderRules() {
     `<b>Entry.</b> Within ${v(o.entryWithin)} candles of the CHoCH, price comes back to the ${zone} and prints ${pats.length ? pats.join(' or ') : 'nothing (all patterns are switched off)'}.${o.firstTouchOnly ? ' The pattern has to include the <b>first</b> candle that touches the zone.' : ''} A close beyond the order block cancels the setup.`,
     `<b>Grade.</b> When the zones are marked the setup is graded on its confluences: the swept level is key liquidity (PDH/PDL, a session high/low or equal highs/lows, not a plain swing); the sweep came in the London or New York session; the OB sits in discount for a buy or premium for a sell; it goes with the higher-timeframe trend; and the volume candle has at least 2× average volume (when the data has volume). All of them is ${v('A+')}, three quarters ${v('A')}, half ${v('B')}, less ${v('C')}.${o.minGrade && o.minGrade !== 'C' ? ` Setups below ${v(o.minGrade)} are <b>dropped</b>.` : ''}`,
     `<b>Trade.</b> Buys fill at the ask: the close plus a spread of ${v(fmtP(o.spread))}; sells fill at the close and exit when the ask reaches the stop or target. Stop ${v(o.slBufferAtr + '× ATR')} beyond ${o.slMode === 'sweep' ? 'the sweep wick' : "the order block or the pattern's wick, whichever is further"}. ${tgt} A candle that touches both stop and target counts as a loss.`,
+    `<b>Candlestick patterns.</b> The Patterns tab finds ${CS.PATTERNS.length} classic patterns (hammer, engulfing, stars, harami, piercing, tweezers, soldiers and crows, three inside/outside, dojis, marubozu, pins). Gold trades around the clock, so the rules use bodies, wicks and closes instead of gaps; sizes are in ATR(14) before the pattern; a reversal needs the trend it reverses (the close ${CS.TREND_LEN} candles earlier at least ${CS.TREND_ATR} ATR away) and has to make that stretch's low or high. Each one is scored on this data against an ordinary candle.`,
+    `<b>Trade plan.</b> At the cursor: BUY NOW or SELL NOW when an entry has just printed and price is still within ${ADV.CHASE_R}R of it; otherwise what each side needs next, at which price, by when, and what cancels it. Planned entries are where price first reaches the zone, stops beyond the order block, as the engine trades them.`,
     `<b>Next move.</b> A model trained on this data's own history scores how often, from candles like this one, price went up over the next hours and which side's liquidity was taken first. It is only tested on candles it never saw, and the card says how often it was right.`,
     `<b>No peeking.</b> Each mark appears on the candle where it became known, so replay shows exactly what you would have seen live.`,
   ].map(x => `<li>${x}</li>`).join('');
@@ -1729,6 +1992,17 @@ for (const id of ['#list', '#misses']) {
 }
 $('#showMisses').addEventListener('change', renderList);
 for (const tab of document.querySelectorAll('[role="tab"]')) tab.addEventListener('click', () => showTab(tab.id));
+$('#patCtx').value = pat.ctx;
+$('#patH').value = String(pat.h);
+$('#patCtx').addEventListener('change', () => { pat.ctx = $('#patCtx').value; store.set('patCtx', pat.ctx); renderPatterns(); });
+$('#patH').addEventListener('change', () => { pat.h = +$('#patH').value; store.set('patH', pat.h); render(); });
+$('#patTable').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-pat]');
+  if (!b) return;
+  pat.sel = pat.sel === b.dataset.pat ? null : b.dataset.pat;
+  drawOverlays();
+  renderPatterns();
+});
 $('#setup').addEventListener('change', ev => {
   if (ev.target.name === 'src') {
     for (const m of $('#setup').querySelectorAll('.srcmore')) m.hidden = m.dataset.for !== ev.target.value;

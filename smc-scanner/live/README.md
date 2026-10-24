@@ -51,10 +51,11 @@ The Setup tab does all of this with two buttons. Without it:
 The token is never written to the log or shown by the dashboard. An entry alert looks like this:
 
 ```
-XAUUSD 5m BUY signal · Pin bar at OB · grade A
+BUY NOW · XAUUSD 5m · Pin bar at OB · grade A
 Entry 4,349.18  SL 4,341.67  TP 4,364.20 (2R)
 Size: 0.06 lot risks $45.06 (1% of $5,000)
 Swept PDL 4,340.45 at 23:05 · CHoCH 00:10 · IFVG · OB
+Candles: Bullish engulfing ★★
 Confluence 3/4: Key liquidity (PDL), London or NY session, OB in discount
 ⚠ High-impact news: USD CPI m/m in 25 min (18:00)
 Next move: 58% up in the next 1h (medium confidence)
@@ -62,7 +63,14 @@ Past buy entries: 8 of 22 won (36%)
 ```
 
 Times are candle open times (as on the chart) in your time zone, India by default. With `alerts.on`
-set to `"all"` you also get the steps before an entry: sweeps, CHoCHs, marked zones and cancelled setups.
+set to `"all"` you also get the steps before an entry:
+- sweeps and CHoCHs;
+- marked zones, with the planned trade (`Plan: entry ≈ 4,346.30, SL ≈ 4,341.40, TP ≈ 4,356.10 (2R) · off if a close below 4,342.14`);
+- **price is in the BUY zone**: get ready, and buy only when the pattern closes there;
+- cancelled setups.
+
+Each check prints the trade plan for every timeframe in the console, for example
+`5m: +1 candle, WAIT · buy zone ready at 4,342.14 – 4,346.30`.
 
 ## Timing
 

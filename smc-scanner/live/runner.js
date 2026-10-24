@@ -18,6 +18,8 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const SMC = require('../engine.js');
 const P = require('../predict.js');
+const Candles = require('../candles.js');
+const ADV = require('../advisor.js');
 const sources = require('./sources.js');
 const alerts = require('./alerts.js');
 const { createNews, NEWS_DEFAULTS } = require('./news.js');
@@ -350,13 +352,20 @@ function nextRunAt(nowMs, everyMinutes, graceSec = GRACE_SEC) {
 
 // ---------- signals ----------
 
-const KIND_ORDER = { sweep: 0, choch: 1, armed: 2, entry: 3, result: 4, cancel: 5 };
+// the engine's own entry patterns under their candles.js names, so an alert does not repeat them
+const SAME_AS_ENTRY = {
+  'Pin bar': ['bullPin', 'bearPin'], 'Head & shoulders': ['invHeadShoulders', 'headShoulders'],
+  'Three pins': ['bullThreePins', 'bearThreePins'],
+};
+
+const KIND_ORDER = { sweep: 0, choch: 1, armed: 2, touch: 3, entry: 4, result: 5, cancel: 6 };
 
 /*
  * Everything worth an alert that became known on a candle after lastT (a candle open time).
  * Entries always; trade results when `results`; with mode 'all' also sweeps, CHoCHs, marked
- * zones and armed setups that were cancelled. A step on the candle where its setup also ended
- * without an entry is left out (its cancel alert says what happened).
+ * zones, price reaching a zone ("get ready") and armed setups that were cancelled. A step on
+ * the candle where its setup also ended without an entry is left out (its cancel alert says
+ * what happened), and so is a zone touch on the entry candle itself.
  */
 function collectAlerts(E, { lastT = null, mode = 'entry', results = true } = {}) {
   const B = E.bars, cut = lastT === null || lastT === undefined ? 0 : firstAfter(B, lastT);
@@ -381,6 +390,9 @@ function collectAlerts(E, { lastT = null, mode = 'entry', results = true } = {})
     }
     if (all && !en && s.armedAt !== null && s.endAt !== null && s.endAt >= cut) {
       out.push({ kind: 'cancel', dir: s.dir, at: s.endAt, setup: s, event: null });
+    }
+    if (all && s.touchAt !== null && s.touchAt >= cut && !(en && en.i === s.touchAt) && !diedOn(s, s.touchAt)) {
+      out.push({ kind: 'touch', dir: s.dir, at: s.touchAt, setup: s, event: null });
     }
   }
   return out.sort((a, b) => a.at - b.at || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
@@ -483,7 +495,7 @@ function qualityOf(model) {
  * index that starts before the window is clamped to 0; the object then also carries `t`,
  * the original candle time.
  */
-function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null, model = null, track = null } = {}) {
+function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null, model = null, track = null, patternStats = null, plan = null } = {}) {
   const B = E.bars, n = B.length, off = Math.max(0, n - windowCandles), last = n - 1;
   const rb = k => (k === null || k === undefined ? k : Math.max(0, k - off));
   const tOf = k => (k === null || k === undefined ? null : B[k].t);
@@ -536,7 +548,7 @@ function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null,
     setups, liq, events, summary: E.summary(), recentSignals,
     active: { bull: stage(E.active.bull), bear: stage(E.active.bear) }, htfBias: E.htf ? E.htf.bias : null,
     forecast: forecast && { ...forecast, at: rb(forecast.at), time: iso(forecast.t) },
-    quality: qualityOf(model), forecastTrack: track,
+    quality: qualityOf(model), forecastTrack: track, patternStats, plan,
   };
 }
 
@@ -632,6 +644,7 @@ class LiveScanner {
       : createNews(cfg.news, { dataDir: this.dataDir, log: this.log, clock: this.clock });
     this.retry = [];   // alerts Telegram did not take, tried again at the next checks
     this.models = {};
+    this.patternStats = {};
     this.forecasts = this._loadForecasts();
     this.recentAlerts = [];
     this.health = {
@@ -756,7 +769,18 @@ class LiveScanner {
     return Math.min(this.cfg.historyCandles, Math.max(10, gap + REVISE_BARS + 2));
   }
 
+  // How each candlestick pattern did on the whole history (the dashboard's Patterns tab).
+  _patternStats(tfMin, E) {
+    try {
+      const ev = Candles.evaluate(E.bars, Candles.detectAll(E.bars, { atr: E.atr, vol: E.volAvg }), { atr: E.atr });
+      this.patternStats[tfMin] = { candles: E.bars.length, base: ev.base, horizons: ev.horizons, rows: ev.rows };
+    } catch (err) {
+      this._say(`pat${tfMin}`, `Candlestick statistics failed on ${tfMin}m: ${err.message}`);
+    }
+  }
+
   _train(tfMin, E) {
+    this._patternStats(tfMin, E);
     const n = E.bars.length, opts = predictOptions(n, this.cfg.predict);
     const model = { n, firstT: E.bars[0].t, wf: null, trainedAt: this.clock(), ms: 0, note: null };
     if (!opts) {
@@ -780,7 +804,7 @@ class LiveScanner {
   _scan(tfMin, now, reshaped) {
     const tfSec = tfMin * 60;
     const bars = tfMin === this.baseMin ? this.history : resampleClosed(this.history, this.baseSec, tfSec);
-    const out = { tf: tfMin, tfSec, bars, engine: null, forecast: null, model: this.models[tfMin] || null, alerts: [], stale: 0, newCandles: 0, first: false };
+    const out = { tf: tfMin, tfSec, bars, engine: null, forecast: null, model: this.models[tfMin] || null, plan: null, alerts: [], stale: 0, newCandles: 0, first: false };
     if (!bars.length) return out;
     const E = SMC.run(bars, this.cfg.engine), n = bars.length;
     out.engine = E;
@@ -799,6 +823,19 @@ class LiveScanner {
       }
     }
     this._logForecast(tfMin, out.forecast, model);
+    // the trade plan at the newest candle: what the console line and the API report
+    try {
+      const last = n - 1, st = this.patternStats[tfMin];
+      out.plan = ADV.plan({
+        bars, setups: E.setups, levels: E.events.filter(e => e.type === 'liq'), c: last, opts: E.o, tfSec,
+        atr: E.atr[last], risk: this.cfg.risk, odds: s => P.setupOdds(E, s, last), forecast: out.forecast,
+        patterns: Candles.detectAt(bars, last, { atr: E.atr, vol: E.volAvg }),
+        patternStats: st ? Object.fromEntries(st.rows.map(r => [r.key, r])) : null,
+        price: alerts.price, time: t => alerts.clock(t, this.cfg.timeZone),
+      });
+    } catch (err) {
+      this._say(`plan${tfMin}`, `Trade plan failed on ${tfMin}m: ${err.message}`);
+    }
 
     const key = String(tfMin), prev = this.state.lastProcessed[key];
     const known = prev !== null && prev !== undefined;
@@ -834,12 +871,19 @@ class LiveScanner {
 
   _alert(raw, E, tfMin, forecast) {
     const B = E.bars, s = raw.setup, at = raw.at, known = k => k !== null && k <= at;
-    const graded = known(s.armedAt);
+    const graded = known(s.armedAt), zoneStep = raw.kind === 'armed' || raw.kind === 'touch';
+    const levels = zoneStep ? E.events.filter(e => e.type === 'liq') : null;
     const a = {
       kind: raw.kind, symbol: this.cfg.symbol, tfMin, dir: raw.dir, t: B[at].t, time: iso(B[at].t),
       risk: this.cfg.risk,
       // news around the moment the alert goes out: the close of the candle
-      news: this.news && (raw.kind === 'entry' || raw.kind === 'armed') ? this.news.near(B[at].t + tfMin * 60) : [],
+      news: this.news && (raw.kind === 'entry' || zoneStep) ? this.news.near(B[at].t + tfMin * 60) : [],
+      // the trade the zone would give, as the engine would take it
+      plan: zoneStep ? ADV.project(s, { bars: B, c: at, opts: E.o, levels, atr: E.atr[at], risk: this.cfg.risk }) : null,
+      patternText: Object.entries(E.o.patterns).filter(([, on]) => on).map(([k]) => ADV.PATTERN_NAMES[k] || k).join(' or '),
+      // classic candlestick patterns on the entry candle, with their trend rules
+      candles: raw.kind === 'entry'
+        ? Candles.detectAt(B, at, { atr: E.atr, vol: E.volAvg }).filter(h => h.dir === raw.dir && !SAME_AS_ENTRY[s.entry.pattern]?.includes(h.key)) : null,
       timeZone: this.cfg.timeZone, entryZone: this.cfg.engine.entryZone || SMC.DEFAULTS.entryZone,
       setup: {
         id: s.id, label: s.label, src: s.src, levelPrice: s.level.price, sweepT: B[s.sweepAt].t,
@@ -956,7 +1000,7 @@ class LiveScanner {
     for (const a of pending) {
       if (this.news) {
         // the calendar may have arrived after the alert was built
-        a.news = a.kind === 'entry' || a.kind === 'armed' ? this.news.near(a.t + a.tfMin * 60) : [];
+        a.news = ['entry', 'armed', 'touch'].includes(a.kind) ? this.news.near(a.t + a.tfMin * 60) : [];
         a.text = alerts.message(a);
       }
       a.delivery = await Promise.resolve().then(() => this.notifier.send(a)).catch(err => ({ error: err.message }));
@@ -1044,6 +1088,7 @@ class LiveScanner {
         continue;
       }
       const bits = [r.first ? 'first check' : r.newCandles ? `+${r.newCandles} candle${r.newCandles === 1 ? '' : 's'}` : 'no new candle'];
+
       const act = ['bull', 'bear'].map(d => r.engine.active[d]).filter(Boolean).map(s => {
         const w = s.dir === 'bull' ? 'buy' : 'sell';
         if (s.stage === 'armed') return `${w} armed at OB ${alerts.price(s.obZone.bottom)}–${alerts.price(s.obZone.top)}`;
@@ -1053,7 +1098,7 @@ class LiveScanner {
       for (const e of r.engine.open) {
         act.push(`${e.dir === 'bull' ? 'buy' : 'sell'} trade open from ${alerts.price(e.entry)} (SL ${alerts.price(e.sl)}, TP ${alerts.price(e.tp)})`);
       }
-      bits.push(act.length ? act.join(', ') : 'no setup');
+      bits.push(r.plan ? r.plan.headline : act.length ? act.join(', ') : 'no setup');
       const f = r.forecast;
       if (f) {
         const h = f.horizons.find(x => x.minutes === 60) || f.horizons[0], up = h.pUp >= 0.5;
@@ -1110,7 +1155,8 @@ class LiveScanner {
       const r = results[tf];
       if (!r || !r.engine) continue;
       out.timeframes[String(tf)] = serialiseTimeframe(r.engine, {
-        tfSec: r.tfSec, forecast: r.forecast, model: r.model,
+        tfSec: r.tfSec, forecast: r.forecast, model: r.model, patternStats: this.patternStats[tf] || null,
+        plan: r.plan ? { verdict: r.plan.verdict, headline: r.plan.headline, detail: r.plan.detail } : null,
         track: scoreForecasts(this.forecasts.filter(x => x.tf === tf), r.bars),
       });
     }

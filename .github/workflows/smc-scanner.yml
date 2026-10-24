@@ -2,6 +2,7 @@ name: Gold SMC Scanner tests
 
 on:
   push:
+    branches: [master]
     paths:
       - 'smc-scanner/**'
       - '.github/workflows/smc-scanner.yml'

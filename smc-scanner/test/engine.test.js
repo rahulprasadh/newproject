@@ -669,3 +669,29 @@ test('gold market hours: closed Friday 17:00 to Sunday 18:00 New York and 17:00-
   assert.equal(SMC.marketStatus(at('2026-11-06T21:30:00Z')).open, true);    // Fri 16:30 NY
   assert.equal(SMC.marketStatus(at('2026-11-06T22:00:00Z')).open, false);   // Fri 17:00 NY
 });
+
+test('extra entry patterns from candles.js: only when switched on, shape at the zone, no look-ahead', () => {
+  const { loadSample } = require('../live/sources.js');
+  const C = require('../candles.js');
+  const B = loadSample().bars.slice(0, 15000);
+  const base = SMC.run(B, { spread: 0.25 });
+  const all = { star: true, three: true, piercing: true, tweezer: true, harami: true, doji: true };
+  const more = SMC.run(B, { spread: 0.25, patterns: all });
+  const names = new Set(base.setups.filter(s => s.entry).map(s => s.entry.pattern));
+  for (const n of names) assert.ok(['Pin bar', 'Head & shoulders'].includes(n), `default patterns only, got ${n}`);
+  assert.ok(more.summary().entries > base.summary().entries, 'more patterns, more entries');
+  const extra = more.setups.filter(s => s.entry && !['Pin bar', 'Head & shoulders'].includes(s.entry.pattern));
+  assert.ok(extra.length > 0, 'some entries come from the extra patterns');
+  const byName = Object.fromEntries(C.PATTERNS.map(p => [p.name, p.key]));
+  for (const s of extra) {
+    const h = C.match(more.bars, s.entry.i, byName[s.entry.pattern], { atr: more.atr, trend: false });
+    assert.ok(h, `${s.entry.pattern} is really there at ${s.entry.i}`);
+    assert.ok(h.from > s.armedAt, 'the pattern starts after the zones were marked');
+    assert.equal(h.dir, s.dir);
+  }
+  // a run cut short gives the same events up to the cut
+  const cut = 9000, part = SMC.run(B.slice(0, cut), { spread: 0.25, patterns: all });
+  const key = e => `${e.type}:${e.dir || ''}:${e.i}:${e.pattern || ''}`;
+  assert.deepEqual(part.events.filter(e => e.at < cut && e.type === 'entry').map(key),
+    more.events.filter(e => e.at < cut && e.type === 'entry').map(key));
+});

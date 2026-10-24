@@ -1,6 +1,6 @@
 // Trains the next-move forecaster off the page's main thread.
 // In: {id, bars, opts (engine), popts (walkForward)}. Out: {id, wf} or {id, error}.
-importScripts('engine.js', 'predict.js');
+importScripts('candles.js', 'engine.js', 'predict.js');
 
 self.onmessage = ev => {
   const { id, bars, opts, popts } = ev.data;

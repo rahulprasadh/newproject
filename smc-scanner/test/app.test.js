@@ -107,7 +107,7 @@ test('alert text: grade, confluence, lot size and the news warning', () => {
     risk: { balance: 5000, percent: 1 }, news: [{ country: 'USD', title: 'CPI m/m', t: cpi, minutes: 5 }],
   });
   const lines = text.split('\n');
-  assert.equal(lines[0], 'XAUUSD 5m BUY signal · Pin bar at OB · grade A');
+  assert.equal(lines[0], 'BUY NOW · XAUUSD 5m · Pin bar at OB · grade A');
   assert.equal(lines[2], 'Size: 0.06 lot risks $45.06 (1% of $5,000)');
   assert.ok(lines.includes('Confluence 3/4: Key liquidity (PDL), London or NY session, OB in discount'));
   assert.ok(lines.includes('⚠ High-impact news: USD CPI m/m in 5 min (18:00)'));
@@ -426,4 +426,26 @@ test('command line: a fast replay demo runs, and a second copy on the same port 
     other.closeAllConnections();
     await new Promise(res => other.close(res));
   }
+});
+
+test('zone alerts carry the planned trade, a touch alert says get ready, entries name their candles', async () => {
+  const ADV = require('../advisor.js');
+  const { S, s, notifier } = await toFirstEntry();
+  const sent = notifier.sent.map(x => x.a).filter(a => a.tfMin === 5 && a.setup.id === s.id);
+  const kinds = sent.map(a => a.kind);
+  const armed = sent.find(a => a.kind === 'armed');
+  const entry = sent.find(a => a.kind === 'entry');
+  assert.ok(entry, kinds.join(','));
+  if (armed) {
+    assert.match(armed.text, /^Plan: entry ≈ [\d,.]+, SL ≈ [\d,.]+, TP ≈ [\d,.]+ \(2R\) · off if a close (below|above) [\d,.]+$/m);
+    const pr = ADV.project(s, { bars: S.history, c: s.armedAt, opts: SMC.run(S.history, S.cfg.engine).o, levels: [], risk: null });
+    assert.ok(Math.abs(armed.plan.entry - pr.entry) < 1e-9);
+  }
+  const touch = sent.filter(a => a.kind === 'touch');
+  assert.ok(touch.length <= 1, 'at most one get-ready alert per setup');
+  if (s.touchAt !== s.entry.i) assert.equal(touch.length, 1, 'price reached the zone before the entry candle');
+  for (const t of touch) assert.match(t.text, /Price is in the (BUY|SELL) zone/);
+  assert.match(entry.text, /^(BUY|SELL) NOW · XAUUSD 5m · /);
+  assert.ok(Array.isArray(entry.candles));
+  for (const c of entry.candles) assert.equal(c.dir, entry.dir);
 });

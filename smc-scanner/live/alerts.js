@@ -117,6 +117,21 @@ function gradeLine(s) {
   return `Confluence ${met.length}/${s.factors.length}${met.length ? ': ' + met.join(', ') : ''}`;
 }
 
+const zoneWord = (a, s) => (a.entryZone === 'fvg' ? s.fvgKind : a.entryZone === 'either' ? `${s.fvgKind} or OB` : 'OB');
+
+// "Plan: entry ≈ 4,346.30, SL ≈ 4,341.40, TP ≈ 4,356.10 (2R) · off if a close below 4,342.14"
+function planLine(p) {
+  if (!p) return null;
+  const bull = p.sl < p.entry;
+  return `Plan: entry ≈ ${price(p.entry)}, SL ≈ ${price(p.sl)}, TP ≈ ${price(p.tp)} (${rText(p.rr)}) · off if a close ${bull ? 'below' : 'above'} ${price(p.floor)}`;
+}
+
+// "Candles: Bullish engulfing ★★, Hammer ★"
+function candlesLine(list) {
+  if (!list || !list.length) return null;
+  return `Candles: ${list.map(c => `${c.name} ${'★'.repeat(c.stars || 1)}`).join(', ')}`;
+}
+
 function story(a) {
   const s = a.setup, tz = a.timeZone, parts = [`Swept ${s.label || 'liquidity'} ${price(s.levelPrice)} at ${clock(s.sweepT, tz)}`];
   if (s.chochT) parts.push(`CHoCH ${clock(s.chochT, tz)}`);
@@ -125,9 +140,10 @@ function story(a) {
 }
 
 /*
- * a = {kind: 'entry'|'sweep'|'choch'|'armed'|'result'|'cancel', symbol, tfMin, dir, t (candle time),
- *      setup: {label, levelPrice, sweepT, chochT, chochPrice, refPrice, fvgKind, fvg, ob, volX, reason},
- *      entry: engine entry, forecast, odds, timeZone}
+ * a = {kind: 'entry'|'sweep'|'choch'|'armed'|'touch'|'result'|'cancel', symbol, tfMin, dir, t (candle time),
+ *      setup: {label, levelPrice, sweepT, chochT, chochPrice, refPrice, fvgKind, fvg, ob, volX, reason, grade, factors},
+ *      entry: engine entry, forecast, odds, timeZone, risk, news, candles (patterns on the entry candle),
+ *      plan (advisor.project for zones: entry, sl, tp, rr, floor, zone), patternText}
  */
 function message(a) {
   const head = `${a.symbol} ${a.tfMin}m`, tz = a.timeZone, s = a.setup || {}, e = a.entry;
@@ -135,10 +151,11 @@ function message(a) {
   switch (a.kind) {
     case 'entry': {
       const tpNote = e.tpSrc && e.tpSrc !== 'rr' ? ` at ${e.tpSrc}` : '';
-      lines.push(`${head} ${sideOf(e.dir)} signal · ${e.pattern} at ${e.zone}${e.grade ? ` · grade ${e.grade}` : ''}`);
+      lines.push(`${sideOf(e.dir)} NOW · ${head} · ${e.pattern} at ${e.zone}${e.grade ? ` · grade ${e.grade}` : ''}`);
       lines.push(`Entry ${price(e.entry)}  SL ${price(e.sl)}  TP ${price(e.tp)} (${rText(e.rr)}${tpNote})`);
       lines.push(sizeLine(e, a.risk));
       lines.push(story(a));
+      lines.push(candlesLine(a.candles));
       lines.push(gradeLine(s));
       lines.push(newsLine(a.news, tz));
       lines.push(nextMove(a.forecast), oddsLine(a.odds, `Past ${wordOf(e.dir)} entries`));
@@ -159,10 +176,20 @@ function message(a) {
       const vol = Number.isFinite(s.volX) ? ` · volume ${s.volX.toFixed(1)}x` : '';
       lines.push(`${head} ${sideOf(a.dir)} zones marked at ${clock(a.t, tz)}${s.grade ? ` · grade ${s.grade}` : ''}`);
       lines.push(`OB ${price(s.ob.bottom)} – ${price(s.ob.top)} · ${s.fvgKind} ${price(s.fvg.bottom)} – ${price(s.fvg.top)}${vol}`);
-      lines.push(`Wait for a pin bar or head & shoulders at the ${a.entryZone === 'fvg' ? s.fvgKind : 'OB'}`);
+      lines.push(`Wait for ${a.patternText || 'a pin bar or head & shoulders'} at the ${zoneWord(a, s)}`);
+      lines.push(planLine(a.plan), sizeLine(a.plan, a.risk));
       lines.push(gradeLine(s));
       lines.push(newsLine(a.news, tz));
       lines.push(oddsLine(a.odds, `Past armed ${wordOf(a.dir)} setups`));
+      break;
+    }
+    case 'touch': {
+      const z = a.plan && a.plan.zone;
+      lines.push(`${head} Price is in the ${sideOf(a.dir)} zone at ${clock(a.t, tz)}${z ? ` · ${z.kind} ${price(z.bottom)} – ${price(z.top)}` : ''}`);
+      lines.push(`${sideOf(a.dir) === 'BUY' ? 'Buy' : 'Sell'} when ${a.patternText || 'a pin bar or head & shoulders'} closes there. Not before.`);
+      lines.push(planLine(a.plan), sizeLine(a.plan, a.risk));
+      lines.push(gradeLine(s));
+      lines.push(newsLine(a.news, tz));
       break;
     }
     case 'result': {
@@ -268,5 +295,5 @@ function createNotifier(cfg = {}, { log = console.log, write = s => process.stdo
 
 module.exports = {
   message, nextMove, liquidityLine, oddsLine, consoleText, sendTelegram, createNotifier,
-  clock, dateTime, price, hide, positionSize, sizeLine, newsLine, gradeLine, money,
+  clock, dateTime, price, hide, positionSize, sizeLine, newsLine, gradeLine, money, planLine, candlesLine,
 };

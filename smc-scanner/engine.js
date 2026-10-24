@@ -21,9 +21,9 @@
  * Every event carries `at`, the index of the bar on which it became known.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.SMC = factory();
-}(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./candles.js'));
+  else root.SMC = factory(root.SMCCandles);
+}(typeof self !== 'undefined' ? self : this, function (Candles) {
   'use strict';
 
   const DEFAULTS = {
@@ -42,8 +42,12 @@
     obLookback: 5,       // how far before the sweep candle to look for the order block
     entryZone: 'ob',     // where to wait for the entry: 'ob', 'fvg' or 'either'
     entryWithin: 40,     // bars after the CHoCH allowed for the retest and entry
-    // 'Three pins' and 'Engulfing' are extra entry patterns, off unless switched on
-    patterns: { pin: true, hs: true, threePins: false, engulf: false },
+    // pin bar and head & shoulders are the strategy's own; the rest are extra confirmations
+    // from candles.js (shape only: the zone is the context), off unless switched on
+    patterns: {
+      pin: true, hs: true, threePins: false, engulf: false,
+      star: false, piercing: false, tweezer: false, harami: false, three: false, doji: false,
+    },
     pinWick: 2,          // pin bar rejection wick is at least this many times the body
     pinWickPct: 0.5,     // and at least this share of the candle's range
     firstTouchOnly: false, // only the first return to the zone may give the entry
@@ -65,6 +69,16 @@
     requireDiscount: false, // buy OB in the lower half of the range, sell OB in the upper half
     minGrade: 'C',       // drop armed setups graded below this: 'A+', 'A', 'B' or 'C' (= keep all)
   };
+
+  // Extra entry patterns: option -> [bullish keys, bearish keys] in candles.js
+  const EXTRA = [
+    ['star', [['morningStar', 'morningDojiStar'], ['eveningStar', 'eveningDojiStar']], 3],
+    ['three', [['threeInsideUp', 'threeOutsideUp'], ['threeInsideDown', 'threeOutsideDown']], 3],
+    ['piercing', [['piercing'], ['darkCloud']], 2],
+    ['tweezer', [['tweezerBottom'], ['tweezerTop']], 2],
+    ['harami', [['bullHarami', 'bullHaramiCross'], ['bearHarami', 'bearHaramiCross']], 2],
+    ['doji', [['dragonflyDoji'], ['gravestoneDoji']], 1],
+  ];
 
   // Sessions in New York time, minutes after midnight [start, end).
   const SESSIONS = { asia: [1200, 1440], london: [120, 300], ny: [420, 600] };
@@ -166,7 +180,8 @@
       };
       const p = this.o.patterns;
       // how many candles the longest enabled pattern spans
-      this._span = Math.max(p.pin ? 1 : 0, p.engulf ? 2 : 0, p.hs || p.threePins ? 3 : 0);
+      this._span = Math.max(p.pin ? 1 : 0, p.engulf ? 2 : 0, p.hs || p.threePins ? 3 : 0,
+        ...EXTRA.map(([k, , n]) => (p[k] ? n : 0)));
       this.bars = [];
       this.atr = [];
       this.volAvg = [];       // average volume of the previous volLen bars
@@ -650,6 +665,15 @@
           && body > Math.abs(p.c - p.o);
         if (turns(b) && engulfs && reached(bull ? p.l : p.h) && holds(b.c)) {
           return { name: 'Engulfing', tip: bull ? Math.min(p.l, b.l) : Math.max(p.h, b.h), from: i - 1 };
+        }
+      }
+      if (Candles) {
+        for (const [opt, keys] of EXTRA) {
+          if (!o.patterns[opt]) continue;
+          for (const key of keys[bull ? 0 : 1]) {
+            const h = Candles.match(B, i, key, { atr: this.atr, trend: false });
+            if (h && h.from > s.armedAt && ok(h.from) && reached(h.tip) && holds(b.c)) return { name: h.name, tip: h.tip, from: h.from };
+          }
         }
       }
       return null;

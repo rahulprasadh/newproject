@@ -198,7 +198,7 @@ test('entry alert text matches the agreed format, in India time', () => {
     forecast: { horizons: [{ minutes: 60, pUp: 0.58, confidence: 'medium' }, { minutes: 240, pUp: 0.4, confidence: 'low' }] },
     odds: null,
   };
-  assert.equal(alerts.message(view), 'XAUUSD 5m BUY signal · Pin bar at OB\nEntry 4,349.18  SL 4,341.67  TP 4,364.20 (2R)\n'
+  assert.equal(alerts.message(view), 'BUY NOW · XAUUSD 5m · Pin bar at OB\nEntry 4,349.18  SL 4,341.67  TP 4,364.20 (2R)\n'
     + 'Swept PDL 4,340.45 at 23:05 · CHoCH 00:10 · IFVG · OB\nNext move: 58% up in the next 1h (medium confidence)');
   const sell = {
     ...view, dir: 'bear',
@@ -207,7 +207,7 @@ test('entry alert text matches the agreed format, in India time', () => {
     odds: { pWinFromHere: { p: 0.4, n: 10 } },
   };
   const lines = alerts.message(sell).split('\n');
-  assert.equal(lines[0], 'XAUUSD 5m SELL signal · Head & shoulders at OB');
+  assert.equal(lines[0], 'SELL NOW · XAUUSD 5m · Head & shoulders at OB');
   assert.match(lines[1], /\(2\.3R at PDL\)$/);
   assert.equal(lines[3], 'Next move: 70% down in the next 1h (low confidence)');
   assert.equal(lines[4], 'Past sell entries: 4 of 10 won (40%)');
@@ -549,7 +549,7 @@ test('replay end to end: an entry is alerted once, a restart does not repeat it,
   const sentA = A.notifier.sent;
   const entryAlerts = sentA.filter(a => a.kind === 'entry' && a.tfMin === 5 && a.t === entryT);
   assert.equal(entryAlerts.length, 1);
-  assert.match(entryAlerts[0].text, /^XAUUSD 5m (BUY|SELL) signal · /);
+  assert.match(entryAlerts[0].text, /^(BUY|SELL) NOW · XAUUSD 5m · /);
   assert.ok(fs.existsSync(A.files.history) && fs.existsSync(A.files.state) && fs.existsSync(A.files.latest));
   assert.ok(/-replay-5m\.csv$/.test(A.files.history), 'replay data is kept apart from live history');
 

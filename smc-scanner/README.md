@@ -10,6 +10,8 @@ Finds this XAUUSD setup on 5m and 15m candles, shows it on a chart and alerts yo
 
 Every setup also gets a **grade** (A+, A, B, C) from its confluences, and every entry alert carries the stop, the target, the **lot size** for your risk, any **high-impact news** close by, and a **next-move forecast**.
 
+The **Trade plan** card says what to do at the current candle: **BUY NOW**, **SELL NOW**, **IN A TRADE**, or **WAIT**. For each side it shows what has to happen next, at which price, by when, and what cancels it. The **Patterns** tab knows 39 classic candlestick patterns and shows how each one actually did on your data.
+
 ## Start it on Windows (no installs)
 
 1. Extract the zip (right-click → **Extract All…**). Do not run it from inside the zip.
@@ -52,6 +54,50 @@ Just after each candle closes (10:05:08, 10:10:08 …) the scanner fetches the n
 - **Stalled feed:** if the newest candle is too old while the market is open, the status line warns you (is MT5 connected?).
 - **News:** the free Forex Factory calendar is checked at most hourly. Entry and zone alerts within 30 minutes of a high-impact USD release say so, and the dashboard lists the next releases.
 - **Problems:** everything is logged to `live\data\scanner.log`. A bad `config.json` never stops the start-up: the defaults are used and the Setup tab says what is wrong. If no source answers, the dashboard still opens, explains why, and the scanner retries every minute.
+
+## The trade plan: when to buy, when to sell
+
+The card at the top of **Signals** reads the chart at the current candle (the last one in Live, the cursor in Replay):
+
+- **BUY NOW / SELL NOW at …** when an entry printed in the last 2 candles and price is still within 0.5R of it. It shows the entry, stop, target, lot size, and how often past setups that got this far won, with the expected R per trade.
+- **IN A BUY / IN A SELL** when a trade is running. It says whether joining now still makes sense (near the entry) or it is too late.
+- **WAIT · buy zone ready at …** when the zones are marked. It gives the planned entry, stop and target, worked out the way the engine trades them, and the patterns that would trigger the entry.
+- **WAIT · setup forming** or **WAIT · no setup**. For each side, the exact next condition:
+  - which liquidity a sweep would take, and how far away it is;
+  - the close that makes the CHoCH, and the candle it must come by;
+  - the volume candle it needs;
+  - what cancels the setup.
+- **Scenarios** from the forecaster, for example: "Sell-side EQL 4,340 taken first (62%): a sweep there can start a BUY setup".
+
+In Replay the plan only knows candles up to the cursor, so it is exactly what you would have seen live. Every price comes from the rules in the **Rules** tab, and every percentage comes from the chart's own past. It is a disciplined way to read the chart, not a promise.
+
+## Candlestick patterns
+
+`candles.js` finds 39 patterns:
+
+- **One candle:** hammer, inverted hammer, hanging man, shooting star, the doji family (doji, dragonfly, gravestone, long-legged), spinning top, marubozu, pin bars.
+- **Two candles:** engulfing, harami, harami cross, piercing line, dark cloud cover, tweezer top and bottom, kicker.
+- **Three candles:** morning and evening star, morning and evening doji star, three white soldiers, three black crows, three inside up/down, three outside up/down, three pins, and the 3-candle head & shoulders.
+
+The rules follow the classic definitions, adapted to a market that trades around the clock:
+
+- They use bodies, wicks and closes, not opening gaps.
+- Sizes are measured in ATR(14) taken before the pattern.
+- A reversal pattern only counts after the trend it reverses (the close 6 candles earlier at least 0.8 ATR away), and only at the low or high of that move.
+- Stars mark the strong ones: volume at least 1.5× average, or a 20-candle low or high.
+
+The **Patterns** tab:
+
+- lists the patterns on the last three candles, with what each one means;
+- has a table of every pattern on the loaded data: how often it worked after 3, 6 or 12 candles, against an ordinary candle;
+- lets you count only patterns at a 20-candle low or high, with high volume, or **inside an SMC zone**;
+- shows a pattern's exact rule, its record (with the 95% range and each half of the data) and every occurrence on the chart when you click it.
+
+The **Candle patterns** chip on the chart marks the strong ones near the cursor.
+
+On the 6-month sample, patterns on their own work about 50% of the time, the same as an ordinary candle. On 5m, at a 20-candle low or high, piercing lines, tweezer bottoms and the 3-candle head & shoulders did a little better.
+
+That is why the strategy uses candles only as the **trigger** at a swept-liquidity order block, never as a signal by themselves. Six more of them can be switched on as entry confirmations in **Settings → Entry**: stars, three inside/outside, piercing/dark cloud, tweezers, harami, and dragonfly/gravestone doji.
 
 ## The grade
 
@@ -97,6 +143,8 @@ These numbers check that the marks are right. They do not prove an edge: 30 trad
 |---|---|
 | `start.bat`, `demo.bat` | Start the live scanner, or the replay demo, on Windows |
 | `engine.js` | The detection engine. It reads one candle at a time and never looks ahead, so history, replay and live give the same signals. |
+| `candles.js` | The 39 candlestick patterns, their rules and their statistics |
+| `advisor.js` | The trade plan: buy, sell, hold or wait, with the levels for each side |
 | `predict.js` | The next-move forecaster, tested walk-forward |
 | `index.html` | The dashboard |
 | `live/runner.js` | The live scanner, its dashboard server and the Setup API |

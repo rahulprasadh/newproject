@@ -119,10 +119,34 @@ async function artifactScenario(browser) {
   await page.click('#rNext');
   await page.waitForSelector('.toast', { timeout: 5000 }).catch(() => {});
   const toast = await page.$$eval('.toast', els => els.map(e => e.innerText).join(' | '));
-  ok('replay: Next signal finds an entry and toasts', /(Buy|Sell) signal/.test(toast), toast.slice(0, 80));
+  ok('replay: Next signal finds an entry and toasts', /(BUY|SELL) NOW/.test(toast), toast.slice(0, 80));
   const detail = await page.$eval('#detail', el => el.innerText);
   ok('detail card shows liquidity label, session and HTF trend', /swept|Liquidity sweep ·/.test(detail) && /HTF trend/.test(detail));
+  const planText = await page.$eval('#plan', el => el.innerText);
+  ok('trade plan: BUY NOW / SELL NOW on the entry candle, with entry, stop and target', /(BUY|SELL) NOW at [\d,.]+/.test(planText) && /ENTRY/i.test(planText) && /STOP/i.test(planText), planText.slice(0, 120));
+  ok('trade plan: both sides say what comes next', (planText.match(/Next:/g) || []).length === 2);
+  await page.click('#rStep');
+  await page.click('#rStep');
+  await page.click('#rStep');
+  const later = await page.$eval('#plan .verdict', el => el.innerText);
+  ok('trade plan: a few candles later the signal is no longer "now"', !/NOW/.test(later) || /IN A/.test(later), later);
+  await page.screenshot({ path: path.join(SHOTS, 'desktop-plan.png') });
   await page.screenshot({ path: path.join(SHOTS, 'desktop-replay.png') });
+
+  // Patterns tab: the table, a pattern's rules and record, and its marks on the chart
+  await page.click('#tabPatterns');
+  await page.waitForFunction(() => document.querySelectorAll('#patTable [data-pat]').length > 20, null, { timeout: 20000 });
+  ok('patterns: the table lists the patterns found', (await page.$$('#patTable [data-pat]')).length > 20);
+  await page.click('#patTable [data-pat="bullEngulfing"]');
+  const pd = await page.$eval('#patDetail', el => el.innerText);
+  ok('patterns: a pattern shows its rule and its record', /Rule\./.test(pd) && /Worked \d+%/.test(pd) && /for any candle/.test(pd), pd.slice(0, 100));
+  await page.selectOption('#patCtx', 'zone');
+  await page.waitForTimeout(300);
+  ok('patterns: counting only inside SMC zones finds fewer', /inside an SMC zone/.test(await page.$eval('#patNote', el => el.innerText)));
+  await page.screenshot({ path: path.join(SHOTS, 'desktop-patterns.png') });
+  await page.selectOption('#patCtx', 'all');
+  await page.click('#patTable [data-pat="bullEngulfing"]');
+  await page.click('#tabSignals');
 
   // a developing setup shows past-setup odds
   await page.check('#showMisses');
@@ -214,7 +238,7 @@ async function liveScenario(browser) {
     await page.evaluate(() => {
       window.__entryToasts = 0;
       new MutationObserver(ms => {
-        for (const m of ms) for (const n of m.addedNodes) if (/signal ·/.test(n.textContent)) window.__entryToasts++;
+        for (const m of ms) for (const n of m.addedNodes) if (/(BUY|SELL) NOW ·/.test(n.textContent)) window.__entryToasts++;
       }).observe(document.querySelector('#toasts'), { childList: true });
     });
     await page.waitForTimeout(1500);
