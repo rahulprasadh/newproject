@@ -13,8 +13,10 @@ This repo gives Claude Code two things when you open it:
 3. **Gold SMC Scanner** in `smc-scanner/`: marks the liquidity sweep → CHoCH →
    volume candle (FVG / IFVG) → order block entry setup on XAUUSD 5m/15m,
    grades each setup, and alerts you live (browser and Telegram) with lot size,
-   news warnings and a next-move forecast. On Windows, double-click
-   `smc-scanner\start.bat`: no installs or admin rights needed. See
+   news warnings and a next-move forecast. Its pattern lab tests 48 candlestick
+   and price-action patterns in context, out of sample, on your own data. On
+   Windows, double-click `smc-scanner\start.bat` (or `now.bat` for the trade
+   plan right now): no installs or admin rights needed. See
    `smc-scanner/README.md`.
 
 ## Setup

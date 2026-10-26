@@ -126,10 +126,102 @@ function planLine(p) {
   return `Plan: entry ≈ ${price(p.entry)}, SL ≈ ${price(p.sl)}, TP ≈ ${price(p.tp)} (${rText(p.rr)}) · off if a close ${bull ? 'below' : 'above'} ${price(p.floor)}`;
 }
 
-// "Candles: Bullish engulfing ★★, Hammer ★"
+// what the pattern lab found for a pattern, in a few words: "49% vs 48% usual, no edge"
+function labShort(sc) {
+  if (!sc) return null;
+  const pc = v => `${Math.round(100 * v)}%`, r = sc.record;
+  if (sc.verdict === 'edge' && sc.p !== null) return `model ${pc(sc.p)} to go 1 ATR its way first`;
+  if (r && r.n >= 30) return `${pc(r.p)} vs ${pc(r.base)} usual, ${{ same: 'no edge', better: 'above usual', worse: 'below usual' }[r.verdict] || 'no edge'}`;
+  return null;
+}
+
+// "Candles: Bullish engulfing ★★ (49% vs 48% usual, no edge), Hammer ★"
 function candlesLine(list) {
   if (!list || !list.length) return null;
-  return `Candles: ${list.map(c => `${c.name} ${'★'.repeat(c.stars || 1)}`).join(', ')}`;
+  return `Candles: ${list.map(c => {
+    const t = labShort(c.lab);
+    return `${c.name} ${'★'.repeat(c.stars || 1)}${t ? ` (${t})` : ''}`;
+  }).join(', ')}`;
+}
+
+// "Candle check: swept PDL 4,340.45, at the marked buy zone, London · tested: … · no edge"
+function checkLine(c) {
+  if (!c) return null;
+  return `Candle check: ${c.reasons.length ? `${c.reasons.join(', ')} · ` : ''}${c.text}`;
+}
+
+// One line on what the pattern lab found on this timeframe's history.
+function labLine(lab) {
+  const M = lab && lab.model;
+  if (!M) return null;
+  const pc = v => `${Math.round(100 * v)}%`;
+  if (M.verdict === 'edge') {
+    return `Pattern lab: edge found out of sample. The model's best fifth of patterns went 1 ATR their way first ${pc(M.top.p)} vs ${pc(M.top.bar)} usual (AUC ${M.auc.toFixed(2)}).`;
+  }
+  if (M.verdict === 'none') {
+    return `Pattern lab: no proven edge on this data (AUC ${M.auc === null ? '–' : M.auc.toFixed(2)}, 0.50 is a coin flip; the best fifth went 1 ATR its way first ${pc(M.top.p)} vs ${pc(M.top.bar)} usual). Candles are the trigger at the zone, not a signal on their own.`;
+  }
+  return `Pattern lab: not enough patterns yet (${lab.labelled.toLocaleString('en-US')} of ${M.need.toLocaleString('en-US')}).`;
+}
+
+function planOdds(o) {
+  if (!o) return null;
+  if (o.n < 10) return `Only ${o.n} past setups got this far: too few to judge.`;
+  return `Past setups that got this far: ${Math.round(100 * o.p)}% won (n=${o.n})${o.evR !== null && o.evR !== undefined ? ` → ${o.evR >= 0 ? '+' : ''}${o.evR.toFixed(2)}R expected per trade` : ''}.`;
+}
+
+/*
+ * The whole trade plan of one timeframe as console text (now.bat, --plan):
+ * r = {tfMin, plan (advisor.plan), forecast, patternsNow (patterns on the last candles, each
+ * with its pattern-lab score in .lab), lab (the pattern-lab study)}.
+ */
+function planText(r, { symbol = 'XAUUSD', timeZone, risk = null, news = [] } = {}) {
+  const p = r.plan, L = [];
+  if (!p) return `${symbol} ${r.tfMin}m: no trade plan yet (${r.error || 'no closed candle'})`;
+  L.push(`=== ${symbol} ${r.tfMin}m · ${dateTime(p.t, timeZone)} candle · ${price(p.price)} ===`);
+  L.push(p.headline);
+  if (p.detail) L.push(p.detail);
+  if (p.trade) {
+    const t = p.trade;
+    L.push(`Entry ${price(t.entry)}  SL ${price(t.sl)}  TP ${price(t.tp)} (${rText(t.rr)})`);
+    L.push(sizeLine(t, risk), planOdds(t.odds));
+  }
+  for (const w of p.warnings) L.push(`! ${w}`);
+  const stages = { none: 'no setup', swept: 'liquidity swept', choch: 'CHoCH done', armed: 'zone ready' };
+  for (const side of [p.sides.buy, p.sides.sell]) {
+    L.push('', `${side.word.toUpperCase()} side: ${stages[side.stage] || side.stage}${side.grade ? ` · grade ${side.grade}` : ''}`);
+    side.steps.forEach((s, k) => L.push(`  ${k + 1}. ${s}`));
+    if (side.next) L.push(`  Next: ${side.next}`);
+    if (side.cancel) L.push(`  Cancelled by ${side.cancel}`);
+    const pr = side.projection;
+    if (pr) {
+      L.push(`  Planned trade: entry ≈ ${price(pr.entry)}, SL ≈ ${price(pr.sl)}, TP ≈ ${price(pr.tp)} (${rText(pr.rr)})`);
+      const z = sizeLine(pr, risk);
+      if (z) L.push(`  ${z}`);
+    }
+    if (side.odds) L.push(`  ${planOdds(side.odds)}`);
+  }
+  if (p.scenarios.length) {
+    L.push('', 'Scenarios:');
+    for (const s of p.scenarios) L.push(`  - ${s.text} [${s.confidence} confidence]`);
+  }
+  const nm = nextMove(r.forecast);
+  if (nm) L.push('', nm);
+  const cands = (r.patternsNow || []).filter(h => h.dir !== 'neutral');
+  if (cands.length) {
+    L.push('', 'Candles on the last 3:');
+    for (const h of cands) {
+      const sc = h.lab, when = h.t !== undefined ? `${clock(h.t, timeZone)} ` : '';
+      const txt = sc ? sc.text.charAt(0).toUpperCase() + sc.text.slice(1) : '';
+      L.push(`  - ${when}${h.name} ${'★'.repeat(h.stars || 1)}${sc ? `: ${sc.reasons.length ? `${sc.reasons.join(', ')}. ` : ''}${txt}` : ''}`);
+    }
+  }
+  const ll = labLine(r.lab);
+  if (ll) L.push(ll);
+  if (news && news.length) {
+    L.push(`High-impact news ahead: ${news.slice(0, 4).map(n => `${n.country} ${n.title} at ${dateTime(n.t, timeZone)}`).join('; ')}`);
+  }
+  return L.filter(x => x !== null && x !== undefined).join('\n');
 }
 
 function story(a) {
@@ -156,6 +248,7 @@ function message(a) {
       lines.push(sizeLine(e, a.risk));
       lines.push(story(a));
       lines.push(candlesLine(a.candles));
+      lines.push(checkLine(a.check));
       lines.push(gradeLine(s));
       lines.push(newsLine(a.news, tz));
       lines.push(nextMove(a.forecast), oddsLine(a.odds, `Past ${wordOf(e.dir)} entries`));
@@ -295,5 +388,6 @@ function createNotifier(cfg = {}, { log = console.log, write = s => process.stdo
 
 module.exports = {
   message, nextMove, liquidityLine, oddsLine, consoleText, sendTelegram, createNotifier,
-  clock, dateTime, price, hide, positionSize, sizeLine, newsLine, gradeLine, money, planLine, candlesLine,
+  clock, dateTime, price, hide, positionSize, sizeLine, newsLine, gradeLine, money, planLine, candlesLine, checkLine, labShort,
+  labLine, planText,
 };

@@ -19,6 +19,7 @@ const { spawn } = require('node:child_process');
 const SMC = require('../engine.js');
 const P = require('../predict.js');
 const Candles = require('../candles.js');
+const LAB = require('../patternlab.js');
 const ADV = require('../advisor.js');
 const sources = require('./sources.js');
 const alerts = require('./alerts.js');
@@ -88,6 +89,7 @@ const USAGE = `Gold SMC Scanner, live
   --every 5            minutes between checks (5 to 15)
   --port 8787          dashboard port (http://localhost:8787)
   --once               run one check and exit
+  --plan               run one check, print the full trade plan for every timeframe, and exit
   --cycles N           stop after N checks
   --fast               replay only: run the checks back to back instead of waiting for the clock
   --replay-start X     replay only: start at candle number X or at date X (e.g. 2026-09-01)
@@ -218,6 +220,12 @@ function parseArgs(argv) {
       case '--every': a.overrides.everyMinutes = +value(); break;
       case '--port': a.overrides.port = +value(); break;
       case '--once': a.once = true; break;
+      case '--plan':
+        // a one-off look: print only, so a scanner already running is the one that sends Telegram
+        a.once = true;
+        a.plan = true;
+        a.overrides.alerts = merge(a.overrides.alerts, { telegram: { botToken: '' } });
+        break;
       case '--cycles': a.cycles = Math.max(1, parseInt(value(), 10) || 1); break;
       case '--fast': a.fast = true; break;
       case '--no-server': a.noServer = true; break;
@@ -355,8 +363,15 @@ function nextRunAt(nowMs, everyMinutes, graceSec = GRACE_SEC) {
 // the engine's own entry patterns under their candles.js names, so an alert does not repeat them
 const SAME_AS_ENTRY = {
   'Pin bar': ['bullPin', 'bearPin'], 'Head & shoulders': ['invHeadShoulders', 'headShoulders'],
-  'Three pins': ['bullThreePins', 'bearThreePins'],
+  'Three pins': ['bullThreePins', 'bearThreePins'], Engulfing: ['bullEngulfing', 'bearEngulfing'],
 };
+
+// What the dashboard gets from a pattern-lab study: everything but the fitted model itself.
+function labSummary(res) {
+  if (!res) return null;
+  const { live, keys, ...rest } = res;
+  return rest;
+}
 
 const KIND_ORDER = { sweep: 0, choch: 1, armed: 2, touch: 3, entry: 4, result: 5, cancel: 6 };
 
@@ -495,7 +510,7 @@ function qualityOf(model) {
  * index that starts before the window is clamped to 0; the object then also carries `t`,
  * the original candle time.
  */
-function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null, model = null, track = null, patternStats = null, plan = null } = {}) {
+function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null, model = null, track = null, patternStats = null, plan = null, lab = null, patternsNow = null } = {}) {
   const B = E.bars, n = B.length, off = Math.max(0, n - windowCandles), last = n - 1;
   const rb = k => (k === null || k === undefined ? k : Math.max(0, k - off));
   const tOf = k => (k === null || k === undefined ? null : B[k].t);
@@ -548,7 +563,9 @@ function serialiseTimeframe(E, { tfSec, windowCandles = WINDOW, forecast = null,
     setups, liq, events, summary: E.summary(), recentSignals,
     active: { bull: stage(E.active.bull), bear: stage(E.active.bear) }, htfBias: E.htf ? E.htf.bias : null,
     forecast: forecast && { ...forecast, at: rb(forecast.at), time: iso(forecast.t) },
-    quality: qualityOf(model), forecastTrack: track, patternStats, plan,
+    quality: qualityOf(model), forecastTrack: track, patternStats, plan, lab: labSummary(lab),
+    // patterns on the last candles, each scored by the pattern lab
+    patternsNow: patternsNow && patternsNow.map(h => ({ ...h, i: rb(h.i), from: rb(h.from), t: tOf(h.i) })),
   };
 }
 
@@ -645,6 +662,7 @@ class LiveScanner {
     this.retry = [];   // alerts Telegram did not take, tried again at the next checks
     this.models = {};
     this.patternStats = {};
+    this.labs = {};
     this.forecasts = this._loadForecasts();
     this.recentAlerts = [];
     this.health = {
@@ -769,13 +787,32 @@ class LiveScanner {
     return Math.min(this.cfg.historyCandles, Math.max(10, gap + REVISE_BARS + 2));
   }
 
-  // How each candlestick pattern did on the whole history (the dashboard's Patterns tab).
+  // How each candlestick pattern did on the whole history, alone and in context (the Patterns tab).
   _patternStats(tfMin, E) {
+    let hits;
     try {
-      const ev = Candles.evaluate(E.bars, Candles.detectAll(E.bars, { atr: E.atr, vol: E.volAvg }), { atr: E.atr });
+      hits = Candles.detectAll(E.bars, { atr: E.atr, vol: E.volAvg });
+      const ev = Candles.evaluate(E.bars, hits, { atr: E.atr });
       this.patternStats[tfMin] = { candles: E.bars.length, base: ev.base, horizons: ev.horizons, rows: ev.rows };
     } catch (err) {
       this._say(`pat${tfMin}`, `Candlestick statistics failed on ${tfMin}m: ${err.message}`);
+    }
+    try {
+      this.labs[tfMin] = LAB.study(E, { hits, spread: E.o.spread || 0 });
+    } catch (err) {
+      this._say(`lab${tfMin}`, `The pattern lab failed on ${tfMin}m: ${err.message}`);
+    }
+  }
+
+  // A pattern scored by the pattern lab (null before the lab has run). V is LAB.env(E), built once per scan.
+  _labScore(tfMin, V, h) {
+    const lab = this.labs[tfMin];
+    if (!lab || !V || h.dir === 'neutral') return null;
+    try {
+      return LAB.score(lab, V(), h, { price: alerts.price });
+    } catch (err) {
+      this._say(`labscore${tfMin}`, `Scoring a pattern failed on ${tfMin}m: ${err.message}`);
+      return null;
     }
   }
 
@@ -808,6 +845,8 @@ class LiveScanner {
     if (!bars.length) return out;
     const E = SMC.run(bars, this.cfg.engine), n = bars.length;
     out.engine = E;
+    let env = null;
+    out.labEnv = () => env || (env = LAB.env(E));
     if (!E.hasVolume) {
       const feed = SOURCE_NAMES[this.source.name] && this.source.name !== 'replay' ? SOURCE_NAMES[this.source.name] : 'This feed';
       this._say('novol', `${feed} has no volume for ${this.cfg.symbol}, so the volume check on the displacement candle is skipped and only its size counts.`);
@@ -826,10 +865,14 @@ class LiveScanner {
     // the trade plan at the newest candle: what the console line and the API report
     try {
       const last = n - 1, st = this.patternStats[tfMin];
+      out.patternsNow = [];
+      for (let k = Math.max(1, last - 2); k <= last; k++) {
+        for (const h of Candles.detectAt(bars, k, { atr: E.atr, vol: E.volAvg })) out.patternsNow.push({ ...h, t: bars[k].t, lab: this._labScore(tfMin, out.labEnv, h) });
+      }
       out.plan = ADV.plan({
         bars, setups: E.setups, levels: E.events.filter(e => e.type === 'liq'), c: last, opts: E.o, tfSec,
         atr: E.atr[last], risk: this.cfg.risk, odds: s => P.setupOdds(E, s, last), forecast: out.forecast,
-        patterns: Candles.detectAt(bars, last, { atr: E.atr, vol: E.volAvg }),
+        patterns: out.patternsNow.filter(h => h.i === last),
         patternStats: st ? Object.fromEntries(st.rows.map(r => [r.key, r])) : null,
         price: alerts.price, time: t => alerts.clock(t, this.cfg.timeZone),
       });
@@ -861,7 +904,7 @@ class LiveScanner {
         out.belowGrade++;
         continue;
       }
-      const a = this._alert(raw, E, tfMin, out.forecast);
+      const a = this._alert(raw, E, tfMin, out.forecast, out.labEnv);
       a.key = k;
       out.alerts.push(a);
     }
@@ -869,7 +912,18 @@ class LiveScanner {
     return out;
   }
 
-  _alert(raw, E, tfMin, forecast) {
+  // The engine's entry pattern as candles.js sees it (shape only, as at a zone), scored by the lab.
+  _entryCheck(E, s, tfMin, labEnv) {
+    const e = s.entry;
+    if (!e || !this.labs[tfMin] || !labEnv) return null;
+    const keys = SAME_AS_ENTRY[e.pattern] || [];
+    const h = Candles.detectAt(E.bars, e.i, { atr: E.atr, vol: E.volAvg, trend: false })
+      .find(x => x.dir === e.dir && (keys.includes(x.key) || x.name === e.pattern));
+    const sc = h && this._labScore(tfMin, labEnv, h);
+    return sc ? { name: e.pattern, ...sc } : null;
+  }
+
+  _alert(raw, E, tfMin, forecast, labEnv = null) {
     const B = E.bars, s = raw.setup, at = raw.at, known = k => k !== null && k <= at;
     const graded = known(s.armedAt), zoneStep = raw.kind === 'armed' || raw.kind === 'touch';
     const levels = zoneStep ? E.events.filter(e => e.type === 'liq') : null;
@@ -883,7 +937,10 @@ class LiveScanner {
       patternText: Object.entries(E.o.patterns).filter(([, on]) => on).map(([k]) => ADV.PATTERN_NAMES[k] || k).join(' or '),
       // classic candlestick patterns on the entry candle, with their trend rules
       candles: raw.kind === 'entry'
-        ? Candles.detectAt(B, at, { atr: E.atr, vol: E.volAvg }).filter(h => h.dir === raw.dir && !SAME_AS_ENTRY[s.entry.pattern]?.includes(h.key)) : null,
+        ? Candles.detectAt(B, at, { atr: E.atr, vol: E.volAvg }).filter(h => h.dir === raw.dir && !SAME_AS_ENTRY[s.entry.pattern]?.includes(h.key))
+          .map(h => ({ ...h, lab: this._labScore(tfMin, labEnv, h) })) : null,
+      // the entry candle itself, as the pattern lab sees it: its context and its tested record
+      check: raw.kind === 'entry' ? this._entryCheck(E, s, tfMin, labEnv) : null,
       timeZone: this.cfg.timeZone, entryZone: this.cfg.engine.entryZone || SMC.DEFAULTS.entryZone,
       setup: {
         id: s.id, label: s.label, src: s.src, levelPrice: s.level.price, sweepT: B[s.sweepAt].t,
@@ -1119,6 +1176,23 @@ class LiveScanner {
     return parts.join(' · ');
   }
 
+  // The full trade plan of every timeframe after a check, as text (now.bat, --plan).
+  planReport(r) {
+    if (!r || !r.ok) return `No plan: the check failed (${(r && r.error) || 'unknown error'}).`;
+    if (!r.results) return `No plan: ${r.skipped || 'nothing was checked'}.`;
+    const nowSec = Math.floor(this.clock() / 1000);
+    const news = this.news ? this.news.upcoming(nowSec, 12) : [];
+    const out = this.tfs.map(tf => {
+      const x = r.results[tf];
+      return alerts.planText({ ...x, tfMin: tf, lab: this.labs[tf] || null }, {
+        symbol: this.cfg.symbol, timeZone: this.cfg.timeZone, risk: this.cfg.risk, news,
+      });
+    });
+    const src = SOURCE_NAMES[this.sourceName] || this.sourceName;
+    out.push(`Source: ${src}. Rules, not certainty: every number comes from this chart's own past. Not financial advice.`);
+    return '\n' + out.join('\n\n');
+  }
+
   // What the dashboard shows about the feed, news and settings, apart from the scan itself.
   _context() {
     const nowSec = Math.floor(this.clock() / 1000);
@@ -1156,6 +1230,7 @@ class LiveScanner {
       if (!r || !r.engine) continue;
       out.timeframes[String(tf)] = serialiseTimeframe(r.engine, {
         tfSec: r.tfSec, forecast: r.forecast, model: r.model, patternStats: this.patternStats[tf] || null,
+        lab: this.labs[tf] || null, patternsNow: r.patternsNow || null,
         plan: r.plan ? { verdict: r.plan.verdict, headline: r.plan.headline, detail: r.plan.detail } : null,
         track: scoreForecasts(this.forecasts.filter(x => x.tf === tf), r.bars),
       });
@@ -1786,6 +1861,7 @@ async function main(argv = process.argv.slice(2)) {
 
   if (args.once) {
     const r = await app.scanner.cycle();
+    if (args.plan) console.log(app.scanner instanceof LiveScanner ? app.scanner.planReport(r) : 'No data source answered, so there is no plan. See the messages above.');
     process.off('unhandledRejection', onRejection);
     process.off('uncaughtException', onException);
     return r.ok ? 0 : 1;

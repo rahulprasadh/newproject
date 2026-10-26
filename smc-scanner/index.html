@@ -297,6 +297,17 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 .cnow { display: grid; gap: 6px; }
 .cnow .pc { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 6px; padding: 6px 9px; font-size: 13px; }
 .cnow .pc b { font-weight: 600; }
+.labcard { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.labcard h2 { margin: 0; }
+.labcard p { margin: 0; font-size: 13px; }
+.labv { font: 600 12.5px var(--font-label); letter-spacing: .06em; text-transform: uppercase; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); color: var(--fg); }
+.labv.edge { background: var(--bull); color: var(--surface); border-color: transparent; }
+.ptable.lab { grid-template-columns: minmax(8.5em, 1fr) auto auto auto auto; }
+.ptable.lab .vb { white-space: nowrap; }
+@media (max-width: 560px) {
+  .ptable.lab { grid-template-columns: minmax(8.5em, 1fr) auto auto auto; }
+  .ptable.lab .avg { display: none; }
+}
 
 .chartmsg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; }
 </style>
@@ -420,6 +431,7 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
       </div>
       <div class="pane" id="panePatterns" role="tabpanel" hidden>
         <section class="cnow" id="candlesNow" aria-label="Patterns on the latest candles"></section>
+        <section class="labcard" id="patLab" aria-label="Pattern lab"></section>
         <div class="row2">
           <label class="check">Count
             <select class="sel" id="patCtx">
@@ -460,6 +472,7 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 <script src="engine.js"></script>
 <script src="advisor.js"></script>
 <script src="predict.js"></script>
+<script src="patternlab.js"></script>
 <script src="data/sample.js"></script>
 <script>
 (() => {
@@ -468,6 +481,7 @@ const $ = s => document.querySelector(s);
 const LWC = window.LightweightCharts;
 const SP = window.SMCPredict;
 const CS = window.SMCCandles, ADV = window.SMCAdvisor;
+const LAB = window.SMCPatternLab || null;   // optional: without it the Patterns tab has no lab
 if (!LWC || !window.SMC || !SP || !CS || !ADV) {
   // without the chart library (no internet, a blocked CDN) say so instead of showing a blank page
   $('#chart').innerHTML = '<div class="chartmsg"><p>The chart library could not load, so the chart cannot be drawn.<br>Check the internet connection and reload. Started with <b>start.bat</b>, the scanner serves its own copy, so open <b>http://localhost:8787</b> instead of this file.</p></div>';
@@ -526,7 +540,7 @@ const state = {
   opts: withPreset(store.get('opts', {})),
   layers: { liq: true, sweep: true, choch: true, vol: true, fvg: true, ob: true, trade: true, next: true, cndl: false, misses: false, ...store.get('layers', {}) },
   mode: 'history', cursor: 0, playing: false, selected: null, tz: store.get('tz', 'local'),
-  wf: null, fc: null, trainMsg: '', liveData: null, liveTf: null,
+  wf: null, fc: null, trainMsg: '', liveData: null, liveTf: null, lab: null, labMsg: '',
 };
 
 // ---------- colours from the theme ----------
@@ -742,34 +756,56 @@ function train() {
   const id = ++trainId, n = state.bars.length, popts = predictOpts(n);
   state.wf = null;
   state.fc = null;
+  state.lab = null;
+  // live mode shows the scanner's own lab, run on its whole history
+  const wantLab = !!LAB && state.mode !== 'live' && n > 0;
+  state.labMsg = wantLab ? `Testing every pattern on ${n.toLocaleString('en-US')} candles…` : '';
   if (!popts) {
     const need = 900 * SP.DEFAULTS.stride + SP.DEFAULTS.warmup;
     state.trainMsg = `The forecast needs at least ${need.toLocaleString('en-US')} ${tfName(state.tf)} candles. Still collecting history (${n.toLocaleString('en-US')} so far).`;
-    return;
+    if (!wantLab) return;
+  } else {
+    state.trainMsg = `Training on ${n.toLocaleString('en-US')} candles…`;
   }
-  state.trainMsg = `Training on ${n.toLocaleString('en-US')} candles…`;
-  const done = (wf, err) => {
+  const done = (wf, err, lab, labErr) => {
     if (id !== trainId || state.mode === 'live') return;
-    if (err) state.trainMsg = `The forecast could not be trained: ${err}`;
-    else state.wf = wf;
+    if (popts) {
+      if (err) state.trainMsg = `The forecast could not be trained: ${err}`;
+      else state.wf = wf;
+    }
+    if (wantLab) {
+      state.lab = lab || null;
+      state.labMsg = lab ? '' : `The pattern lab could not run: ${labErr || err || 'no result'}`;
+    }
     state.fc = null;
     renderNext();
     drawOverlays();
+    renderPatterns();
+    renderPlan();
   };
   const eng = state.eng;
   const inline = () => setTimeout(() => {
     if (id !== trainId) return;
-    try {
-      const wf = SP.walkForward(eng, popts);
-      delete wf.rows;
-      done(wf);
-    } catch (e) { done(null, e.message); }
+    let wf = null, err = null, lab = null, labErr = null;
+    if (popts) {
+      try {
+        wf = SP.walkForward(eng, popts);
+        delete wf.rows;
+      } catch (e) { err = e.message; }
+    }
+    if (wantLab) {
+      try { lab = LAB.study(eng, { spread: state.opts.spread || 0 }); } catch (e) { labErr = e.message; }
+    }
+    done(wf, err, lab, labErr);
   }, 60);
   if (worker === false || typeof Worker === 'undefined') { inline(); return; }
   try {
     if (!worker) {
       worker = new Worker('predict-worker.js');
-      worker.onmessage = ev => { if (worker.pending && ev.data.id === worker.pending.id) worker.pending.done(ev.data.wf, ev.data.error); };
+      worker.onmessage = ev => {
+        const d = ev.data;
+        if (worker.pending && d.id === worker.pending.id) worker.pending.done(d.wf, d.error, d.lab, d.labError);
+      };
       worker.onerror = ev => {
         ev.preventDefault();
         worker.terminate();
@@ -779,7 +815,7 @@ function train() {
       };
     }
     worker.pending = { id, done, retry: inline };
-    worker.postMessage({ id, bars: state.bars, opts: state.opts, popts });
+    worker.postMessage({ id, bars: state.bars, opts: state.opts, popts, lab: wantLab });
   } catch {
     worker = false;
     inline();
@@ -901,7 +937,8 @@ const PAT_SHORT = {
   morningStar: 'M.star', eveningStar: 'E.star', morningDojiStar: 'M.doji star', eveningDojiStar: 'E.doji star',
   threeWhiteSoldiers: '3 soldiers', threeBlackCrows: '3 crows', threeInsideUp: '3 in up', threeInsideDown: '3 in down',
   threeOutsideUp: '3 out up', threeOutsideDown: '3 out down', bullThreePins: '3 pins', bearThreePins: '3 pins',
-  invHeadShoulders: 'iH&S', headShoulders: 'H&S',
+  invHeadShoulders: 'iH&S', headShoulders: 'H&S', insideBar: 'Inside', bullFakey: 'Fakey', bearFakey: 'Fakey',
+  bullRails: 'Rails', bearRails: 'Rails', bullKeyReversal: 'Key rev', bearKeyReversal: 'Key rev', bullBeltHold: 'Belt hold', bearBeltHold: 'Belt hold',
 };
 const pat = { bars: null, atr: null, vol: null, hits: [], byI: new Map(), stats: null, statsKey: '', sel: null,
   ctx: store.get('patCtx', 'all'), h: +store.get('patH', 6) || 6 };
@@ -952,11 +989,67 @@ function patStats(force) {
   return pat.stats;
 }
 const statRow = (st, key) => st && st.rows ? st.rows.find(r => r.key === key) : null;
+/*
+ * A pattern as the pattern lab sees it: its context and tested record. Live: the scanner's
+ * score for the patterns on its last candles. History: scored here. Replay: none, because the
+ * lab was run on all loaded candles, including those after the cursor.
+ */
+function labScore(h) {
+  if (!LAB || !h || h.dir === 'neutral') return null;
+  if (state.mode === 'live') {
+    const now = state.liveTf && state.liveTf.patternsNow;
+    const m = now && now.find(x => x.i === h.i && x.key === h.key);
+    return m ? m.lab || null : null;
+  }
+  if (!state.lab || state.mode === 'replay' || !state.eng) return null;
+  if (pat.labEng !== state.eng) { pat.labEnv = LAB.env(state.eng); pat.labEng = state.eng; }
+  try { return LAB.score(state.lab, pat.labEnv, h, { price: fmtP }); } catch { return null; }
+}
+// "49% vs 48% usual, no edge" (the same words as the alerts)
+function labShort(sc) {
+  if (!sc) return '';
+  const r = sc.record;
+  if (sc.verdict === 'edge' && sc.p !== null) return `model ${pct(sc.p)} to go 1 ATR its way first`;
+  if (r && r.n >= 30) return `${pct(r.p)} vs ${pct(r.base)} usual, ${{ same: 'no edge', better: 'above usual', worse: 'below usual' }[r.verdict] || 'no edge'}`;
+  return '';
+}
+function renderLab() {
+  const box = $('#patLab');
+  if (!LAB) { box.hidden = true; return; }
+  const live = state.mode === 'live', L = live ? state.liveTf && state.liveTf.lab : state.lab;
+  box.hidden = false;
+  if (!L) {
+    box.innerHTML = `<h2>Pattern lab</h2><p class="hint">${escapeHtml(live ? 'The scanner runs the lab after its first check, then every hour.' : state.labMsg || 'Load candles to test the patterns.')}</p>`;
+    return;
+  }
+  const M = L.model, o = L.options, pc = v => (v === null || v === undefined ? '–' : pct(v));
+  const fR = v => (v === null || v === undefined ? '–' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}R`);
+  let head, body;
+  if (M.verdict === 'edge') {
+    head = 'Edge found, out of sample';
+    body = `Read with its context, the model's best fifth of patterns went 1 ATR their way first ${pc(M.top.p)} of the time (95% range ${pc(M.top.lo)}–${pc(M.top.hi)}) against ${pc(M.top.bar)} usual, in both halves of the test period, and made ${fR(M.top.avgR)} a trade at ${o.rr}R. Each pattern shows the model's chance. Keep watching it: an edge can fade.`;
+  } else if (M.verdict === 'none') {
+    head = 'No proven edge on this data';
+    body = `Read with all its context (liquidity sweep, SMC zone, FVG, 20/50-candle extreme, session, trend, volume, close), no pattern predicted the next move here. Out of sample the model ranked them with an AUC of ${M.auc === null ? '–' : M.auc.toFixed(2)} (0.50 is a coin flip); its best fifth went 1 ATR their way first ${pc(M.top.p)} of the time against ${pc(M.top.bar)} usual (${fR(M.top.avgR)} a trade at ${o.rr}R). So candles are the trigger at a swept-liquidity order block, not signals on their own.`;
+  } else {
+    head = 'Not enough patterns yet';
+    body = `${L.labelled.toLocaleString('en-US')} patterns have a known result; the model needs ${M.need.toLocaleString('en-US')}. The table already counts them.`;
+  }
+  const vb = g => `<span class="vb ${g.verdict === 'edge' ? 'better' : g.verdict === 'worse' ? 'worse' : 'same'}">${{ edge: 'edge', worse: 'worse', none: 'no edge', few: 'too few' }[g.verdict]}</span>`;
+  const rows = L.groups.filter(g => g.n > 0).map(g => `<span>${escapeHtml(g.name)}</span><span class="r">${g.n.toLocaleString('en-US')}</span><span class="r" title="95% range ${pc(g.lo)}–${pc(g.hi)}; usual ${pc(g.base)}; halves ${g.halves.map(x => pc(x.p)).join(' / ')}">${pc(g.p)}</span><span class="r avg">${fR(g.avgR)}</span><span class="r">${vb(g)}</span>`).join('');
+  const q = M.quintiles && M.quintiles.length ? `<p class="hint">The model's five score bands, lowest to highest, out of sample: ${M.quintiles.map(x => pc(x.p)).join(' · ')}.${M.weights.length ? ` It leaned most on: ${M.weights.slice(0, 3).map(w => `${escapeHtml(w.label.toLowerCase())} (${w.w >= 0 ? '+' : '−'})`).join(', ')}.` : ''}</p>` : '';
+  box.innerHTML = `<h2>Pattern lab · does it predict here?</h2>
+    <div class="labv ${M.verdict}" role="status">${head}</div><p>${body}</p>
+    <div class="ptable lab" role="table" aria-label="Patterns by context"><span class="h">Context</span><span class="h r">Found</span><span class="h r">1 ATR first</span><span class="h r avg">Avg ${o.rr}R</span><span class="h r">Verdict</span>${rows}</div>
+    ${q}
+    <p class="hint">${L.labelled.toLocaleString('en-US')} patterns on ${L.candles.toLocaleString('en-US')} ${tfName(state.tf)} candles${live ? ' of the scanner\'s history' : state.mode === 'replay' ? ', all loaded candles (including those after the replay cursor)' : ''}. <b>1 ATR first</b>: price reached 1 ATR in the pattern's direction before 1 ATR against, within ${o.raceBars} candles; any candle does that ${pc(L.base.bull)} up and ${pc(L.base.bear)} down. <b>Avg ${o.rr}R</b>: a trade from the pattern's close, stop ${o.slBufferAtr} ATR beyond it, target ${o.rr}R, closed after ${o.tradeBars} candles${o.spread ? `, spread ${o.spread}` : ''}. "Edge" needs the 95% range above the usual rate, both halves of the data above it, and a profit in both halves. Hover a rate for its range and halves.</p>`;
+}
 const pctOrDash = p => (p === null || p === undefined ? '–' : pct(p));
 const dirCol = d => (d === 'bull' ? P.bull : d === 'bear' ? P.bear : P.muted);
 const stars = n => '★'.repeat(n || 1);
 function renderPatterns() {
   if ($('#panePatterns').hidden || !state.bars.length || !state.eng) return;
+  renderLab();
   const P0 = patData(), c = state.cursor, st = patStats(true), h = pat.h;
   // the last three candles
   const recent = [];
@@ -964,7 +1057,9 @@ function renderPatterns() {
   $('#candlesNow').innerHTML = `<h2>On the last 3 candles · ${tm(state.bars[c].t)}</h2>` + (recent.length ? recent.map(x => {
     const d = CS.describe(x.key), r = statRow(st, x.key), m = r && r.horizons[h];
     const rec = m ? ` On this data: ${x.dir === 'bull' ? 'up' : 'down'} ${pct(m.p)} of the time after ${h} candles vs ${pct(m.base)} for any candle (n=${m.n}).` : '';
-    return `<div class="pc" style="--c:${dirCol(x.dir)}"><b>${escapeHtml(x.name)}</b> ${stars(x.stars)} <span class="hint">${tm(state.bars[x.i].t)}${x.volX ? ` · volume ${x.volX.toFixed(1)}×` : ''}</span><br>${escapeHtml(d.meaning)}<span class="hint">${rec}</span></div>`;
+    const sc = labScore(x);
+    const lab = sc ? `<br><span class="hint"><b>Context:</b> ${sc.reasons.length ? escapeHtml(sc.reasons.join(', ')) : 'nothing special around it'}. <b>Lab:</b> ${escapeHtml(sc.text)}.</span>` : '';
+    return `<div class="pc" style="--c:${dirCol(x.dir)}"><b>${escapeHtml(x.name)}</b> ${stars(x.stars)} <span class="hint">${tm(state.bars[x.i].t)}${x.volX ? ` · volume ${x.volX.toFixed(1)}×` : ''}</span><br>${escapeHtml(d.meaning)}<span class="hint">${rec}</span>${lab}</div>`;
   }).join('') : '<p class="hint">No classic pattern on these candles.</p>');
   if (!st) { $('#patTable').innerHTML = ''; return; }
   const rows = st.rows.filter(r => r.n > 0);
@@ -1049,8 +1144,9 @@ function renderPlan() {
   const vClass = { buy: 'buy', sell: 'sell', hold: 'hold', wait: '' }[p.verdict];
   const scen = p.scenarios.length ? `<h2>Scenarios</h2><ul class="scen">${p.scenarios.map(x => `<li style="color:${x.dir === 'bull' ? P.bull : P.bear}"><span style="color:var(--fg)">${escapeHtml(x.text)}</span> <span class="conf ${x.confidence}">${x.confidence}</span></li>`).join('')}</ul>` : '';
   const cnd = p.candles.filter(x => x.dir !== 'neutral').map(x => {
-    const m = x.stat;
-    return `${escapeHtml(x.name)} ${stars(x.stars)}${x.atZone ? ' <b>at the zone</b>' : ''}${m ? ` <span class="hint">(${pct(m.p)} vs ${pct(m.base)} usual, n=${m.n})</span>` : ''}`;
+    const m = x.stat, sc = labShort(labScore(x));
+    const note = sc ? ` <span class="hint">(${escapeHtml(sc)})</span>` : m ? ` <span class="hint">(${pct(m.p)} vs ${pct(m.base)} usual, n=${m.n})</span>` : '';
+    return `${escapeHtml(x.name)} ${stars(x.stars)}${x.atZone ? ' <b>at the zone</b>' : ''}${note}`;
   });
   box.innerHTML = `<header><h2>Trade plan</h2><span class="hint">${tfName(state.tf)} · ${tm(p.t)} close · <span class="num">${fmtP(p.price)}</span></span></header>
     <div class="verdict ${vClass}" role="status">${escapeHtml(p.headline)}</div>
@@ -1850,6 +1946,7 @@ const FIELDS = [
     ['chk', 'patterns.tweezer', 'Tweezer bottom / top'],
     ['chk', 'patterns.harami', 'Harami / harami cross'],
     ['chk', 'patterns.doji', 'Dragonfly / gravestone doji'],
+    ['chk', 'patterns.priceAction', 'Fakey, two-bar reversal, key reversal, belt hold'],
     ['num', 'pinWick', 'Pin wick at least (× body)', 1, 6, 0.5],
     ['chk', 'firstTouchOnly', 'Only the first touch of the zone'],
     ['num', 'entryWithin', 'Entry must come within (candles after CHoCH)', 5, 200, 1],
@@ -1924,7 +2021,8 @@ function renderRules() {
     o.patterns.engulf && `an <b>engulfing</b> candle (its body covers the previous opposite candle's body)`,
     o.patterns.star && `a <b>morning or evening star</b>`, o.patterns.three && `<b>three inside or outside</b> up/down`,
     o.patterns.piercing && `a <b>piercing line or dark cloud cover</b>`, o.patterns.tweezer && `a <b>tweezer</b> bottom/top`,
-    o.patterns.harami && `a <b>harami</b> (or harami cross)`, o.patterns.doji && `a <b>dragonfly or gravestone doji</b>`].filter(Boolean);
+    o.patterns.harami && `a <b>harami</b> (or harami cross)`, o.patterns.doji && `a <b>dragonfly or gravestone doji</b>`,
+    o.patterns.priceAction && `a <b>fakey, two-bar reversal, key reversal or belt hold</b>`].filter(Boolean);
   const src = o.liqSources, srcs = [src.swing && `swing highs and lows (${v(o.liqLen)} candles each side)`,
     src.equal && `equal highs / lows (EQH / EQL, within ${v(o.eqTolAtr + '× ATR')})`, src.prevDay && 'the previous day high and low (PDH / PDL, the day starts 17:00 New York)',
     src.session && 'the Asia, London and New York session highs and lows'].filter(Boolean);
@@ -1941,7 +2039,7 @@ function renderRules() {
     `<b>Entry.</b> Within ${v(o.entryWithin)} candles of the CHoCH, price comes back to the ${zone} and prints ${pats.length ? pats.join(' or ') : 'nothing (all patterns are switched off)'}.${o.firstTouchOnly ? ' The pattern has to include the <b>first</b> candle that touches the zone.' : ''} A close beyond the order block cancels the setup.`,
     `<b>Grade.</b> When the zones are marked the setup is graded on its confluences: the swept level is key liquidity (PDH/PDL, a session high/low or equal highs/lows, not a plain swing); the sweep came in the London or New York session; the OB sits in discount for a buy or premium for a sell; it goes with the higher-timeframe trend; and the volume candle has at least 2× average volume (when the data has volume). All of them is ${v('A+')}, three quarters ${v('A')}, half ${v('B')}, less ${v('C')}.${o.minGrade && o.minGrade !== 'C' ? ` Setups below ${v(o.minGrade)} are <b>dropped</b>.` : ''}`,
     `<b>Trade.</b> Buys fill at the ask: the close plus a spread of ${v(fmtP(o.spread))}; sells fill at the close and exit when the ask reaches the stop or target. Stop ${v(o.slBufferAtr + '× ATR')} beyond ${o.slMode === 'sweep' ? 'the sweep wick' : "the order block or the pattern's wick, whichever is further"}. ${tgt} A candle that touches both stop and target counts as a loss.`,
-    `<b>Candlestick patterns.</b> The Patterns tab finds ${CS.PATTERNS.length} classic patterns (hammer, engulfing, stars, harami, piercing, tweezers, soldiers and crows, three inside/outside, dojis, marubozu, pins). Gold trades around the clock, so the rules use bodies, wicks and closes instead of gaps; sizes are in ATR(14) before the pattern; a reversal needs the trend it reverses (the close ${CS.TREND_LEN} candles earlier at least ${CS.TREND_ATR} ATR away) and has to make that stretch's low or high. Each one is scored on this data against an ordinary candle.`,
+    `<b>Candlestick patterns.</b> The Patterns tab finds ${CS.PATTERNS.length} patterns: the classic ones (hammer, engulfing, stars, harami, piercing, tweezers, soldiers and crows, three inside/outside, dojis, marubozu, belt holds, pins) and the price-action ones (inside bar, fakey, two-bar and key reversals). Gold trades around the clock, so the rules use bodies, wicks and closes instead of gaps; sizes are in ATR(14) before the pattern; a reversal needs the trend it reverses (the close ${CS.TREND_LEN} candles earlier at least ${CS.TREND_ATR} ATR away) and has to make that stretch's low or high. Each one is scored on this data against an ordinary candle, and the <b>pattern lab</b> tests them with their context (sweep, zone, FVG, extreme, session, trend, volume) out of sample.`,
     `<b>Trade plan.</b> At the cursor: BUY NOW or SELL NOW when an entry has just printed and price is still within ${ADV.CHASE_R}R of it; otherwise what each side needs next, at which price, by when, and what cancels it. Planned entries are where price first reaches the zone, stops beyond the order block, as the engine trades them.`,
     `<b>Next move.</b> A model trained on this data's own history scores how often, from candles like this one, price went up over the next hours and which side's liquidity was taken first. It is only tested on candles it never saw, and the card says how often it was right.`,
     `<b>No peeking.</b> Each mark appears on the candle where it became known, so replay shows exactly what you would have seen live.`,

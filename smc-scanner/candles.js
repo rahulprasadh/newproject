@@ -61,6 +61,23 @@
   };
   const threePins = (k, bull) => k.every(b => range(b) > 0 && (bull ? lower(b) : upper(b)) >= 0.5 * range(b))
     && (bull ? up(k[2]) : down(k[2]));
+  // the whole range (wicks included) inside the previous candle's range
+  const insideRange = (p, b) => b.h <= p.h && b.l >= p.l;
+  // fakey: a mother candle, an inside candle, then a false break of the inside candle that closes back
+  const fakey = ([m, ib, x], A, bull) => range(m) >= 0.8 * A && insideRange(m, ib) && range(x) > 0
+    && (bull ? x.l < ib.l && x.c > ib.l && x.c <= m.h && x.c - x.l >= 0.5 * range(x)
+      : x.h > ib.h && x.c < ib.h && x.c >= m.l && x.h - x.c >= 0.5 * range(x));
+  // railroad tracks: two big opposite candles of about the same size, the second undoing the first
+  const rails = ([p, b], A, bull) => (bull ? down(p) && up(b) : up(p) && down(b))
+    && body(p) >= 0.8 * A && body(b) >= 0.8 * A && body(p) >= 0.6 * range(p) && body(b) >= 0.6 * range(b)
+    && Math.abs(body(b) - body(p)) <= 0.25 * Math.max(body(p), body(b))
+    && (bull ? b.c >= p.o - 0.15 * body(p) : b.c <= p.o + 0.15 * body(p));
+  // key reversal: takes out the previous candle's low (high), then closes beyond its high (low)
+  const keyReversal = ([p, b], A, bull) => range(b) >= A
+    && (bull ? up(b) && b.l < p.l && b.c > p.h : down(b) && b.h > p.h && b.c < p.l);
+  // belt hold: opens at its low (high) and drives the other way; a few cents of wick allowed
+  const beltHold = (b, A, bull) => (bull ? up(b) && lower(b) <= 0.05 * range(b) : down(b) && upper(b) <= 0.05 * range(b))
+    && body(b) >= 0.6 * range(b) && body(b) >= 0.8 * A;
 
   /*
    * dir: bull / bear / neutral. trend: the trend a reversal needs before it (null = any).
@@ -150,8 +167,50 @@
       rule: 'Upper wick at least 2x the body and half the range, range at least 0.5 ATR. Any trend.',
       test: ([b], A) => pinShape(b, A, false),
     },
+    {
+      key: 'bullBeltHold', name: 'Bullish belt hold', dir: 'bull', bars: 1, type: 'reversal', trend: 'down',
+      meaning: 'Opens at the low of a fall and drives up all candle: buyers were waiting right there.',
+      rule: 'After a fall: an up candle with a lower wick of at most 5% of its range, body at least 60% of the range and 0.8 ATR.',
+      test: ([b], A) => beltHold(b, A, true),
+    },
+    {
+      key: 'bearBeltHold', name: 'Bearish belt hold', dir: 'bear', bars: 1, type: 'reversal', trend: 'up',
+      meaning: 'Opens at the high of a rise and drives down all candle: sellers were waiting right there.',
+      rule: 'After a rise: a down candle with an upper wick of at most 5% of its range, body at least 60% of the range and 0.8 ATR.',
+      test: ([b], A) => beltHold(b, A, false),
+    },
 
     // ---- two candles ----
+    {
+      key: 'insideBar', name: 'Inside bar', dir: 'neutral', bars: 2, type: 'indecision', trend: null,
+      meaning: 'The whole candle fits inside the one before: price is coiling. The break of the mother candle shows the side; a false break is a fakey.',
+      rule: 'The previous candle is at least 0.8 ATR; this candle\'s high and low are inside it and its range is at most 60% of it.',
+      test: ([p, b], A) => range(p) >= 0.8 * A && insideRange(p, b) && range(b) <= 0.6 * range(p),
+    },
+    {
+      key: 'bullRails', name: 'Bullish two-bar reversal (railroad tracks)', dir: 'bull', bars: 2, type: 'reversal', trend: 'down',
+      meaning: 'A big down candle undone by an up candle of the same size: the sellers\' push was fully absorbed.',
+      rule: 'After a fall: a down then an up candle, both bodies at least 0.8 ATR and 60% of their range, sizes within 25% of each other, the up candle closing back near the down candle\'s open.',
+      test: (k, A) => rails(k, A, true),
+    },
+    {
+      key: 'bearRails', name: 'Bearish two-bar reversal (railroad tracks)', dir: 'bear', bars: 2, type: 'reversal', trend: 'up',
+      meaning: 'A big up candle undone by a down candle of the same size: the buyers\' push was fully absorbed.',
+      rule: 'After a rise: an up then a down candle, both bodies at least 0.8 ATR and 60% of their range, sizes within 25% of each other, the down candle closing back near the up candle\'s open.',
+      test: (k, A) => rails(k, A, false),
+    },
+    {
+      key: 'bullKeyReversal', name: 'Bullish key reversal', dir: 'bull', bars: 2, type: 'reversal', trend: 'down',
+      meaning: 'Takes out the previous low, then closes above the previous high: a full turn inside one candle (an outside reversal bar).',
+      rule: 'After a fall: an up candle of at least 1 ATR whose low is below the previous low and whose close is above the previous high.',
+      test: (k, A) => keyReversal(k, A, true),
+    },
+    {
+      key: 'bearKeyReversal', name: 'Bearish key reversal', dir: 'bear', bars: 2, type: 'reversal', trend: 'up',
+      meaning: 'Takes out the previous high, then closes below the previous low: a full turn inside one candle (an outside reversal bar).',
+      rule: 'After a rise: a down candle of at least 1 ATR whose high is above the previous high and whose close is below the previous low.',
+      test: (k, A) => keyReversal(k, A, false),
+    },
     {
       key: 'bullEngulfing', name: 'Bullish engulfing', dir: 'bull', bars: 2, type: 'reversal', trend: 'down',
       meaning: 'An up candle whose body swallows the previous down body: buyers took over.',
@@ -297,6 +356,18 @@
       meaning: 'Three candles in a row reject higher prices with long upper wicks, the third closing down.',
       rule: 'Three candles whose upper wicks are each at least half their range; the third closes down.',
       test: k => threePins(k, false),
+    },
+    {
+      key: 'bullFakey', name: 'Bullish fakey', dir: 'bull', bars: 3, type: 'rejection', trend: null,
+      meaning: 'An inside candle breaks down, then the break fails and price closes back up: the sellers who sold the break are trapped.',
+      rule: 'A mother candle of at least 0.8 ATR, an inside candle, then a candle that trades below the inside candle\'s low, closes back above it (inside the mother candle) and in the upper half of its own range.',
+      test: (k, A) => fakey(k, A, true),
+    },
+    {
+      key: 'bearFakey', name: 'Bearish fakey', dir: 'bear', bars: 3, type: 'rejection', trend: null,
+      meaning: 'An inside candle breaks up, then the break fails and price closes back down: the buyers who bought the break are trapped.',
+      rule: 'A mother candle of at least 0.8 ATR, an inside candle, then a candle that trades above the inside candle\'s high, closes back below it (inside the mother candle) and in the lower half of its own range.',
+      test: (k, A) => fakey(k, A, false),
     },
     {
       key: 'invHeadShoulders', name: 'Inverse head & shoulders (3 candles)', dir: 'bull', bars: 3, type: 'rejection', trend: null,

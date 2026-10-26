@@ -35,6 +35,8 @@ if not defined NODE (
 )
 
 echo.
+rem now.bat: one check, the trade plan printed here, nothing left running
+if defined SMC_NOW goto now
 echo Starting the Gold SMC Scanner. The dashboard opens in your browser (http://localhost:8787).
 echo Keep this window open while you use it; close it to stop.
 echo.
@@ -42,5 +44,15 @@ echo.
 set "CODE=%errorlevel%"
 echo.
 echo The scanner has stopped (exit code %CODE%). Its log is in live\data\scanner.log
+pause
+exit /b %CODE%
+
+:now
+echo Checking the latest prices once, then printing the trade plan for 5m and 15m.
+echo.
+"%NODE%" "%~dp0live\runner.js" --plan %*
+set "CODE=%errorlevel%"
+echo.
+echo Double-click now.bat again for a fresh plan. For alerts as they happen, use start.bat.
 pause
 exit /b %CODE%

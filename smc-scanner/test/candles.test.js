@@ -45,6 +45,11 @@ const BULL = {
   threeOutsideUp: [[0, 0.05, -0.5, -0.4], [-0.45, 0.35, -0.55, 0.3], [0.3, 0.65, 0.25, 0.6]],
   bullThreePins: [[0, 0.05, -0.6, -0.1], [-0.1, -0.05, -0.7, -0.15], [-0.15, 0, -0.75, -0.05]],
   invHeadShoulders: [[0, 0.1, -0.4, -0.2], [-0.2, -0.1, -0.8, -0.3], [-0.3, 0.15, -0.5, 0.1]],
+  // a down candle closing at its low first, so the belt hold's open is the low of the fall
+  bullBeltHold: [[0, 0.05, -0.6, -0.6], [-0.6, 0.4, -0.62, 0.3]],
+  bullRails: [[0, 0.05, -1.05, -1.0], [-1.0, 0, -1.05, -0.05]],
+  bullKeyReversal: [[0, 0.1, -0.6, -0.5], [-0.5, 0.4, -0.9, 0.3]],
+  bullFakey: [[0, 0.5, -0.5, 0.4], [0.4, 0.45, -0.2, 0.1], [0.1, 0.3, -0.35, 0.25]],
 };
 const MIRROR = {
   hammer: 'shootingStar', invertedHammer: 'hangingMan', dragonflyDoji: 'gravestoneDoji', bullMarubozu: 'bearMarubozu',
@@ -52,17 +57,18 @@ const MIRROR = {
   piercing: 'darkCloud', tweezerBottom: 'tweezerTop', bullKicker: 'bearKicker', morningStar: 'eveningStar',
   morningDojiStar: 'eveningDojiStar', threeWhiteSoldiers: 'threeBlackCrows', threeInsideUp: 'threeInsideDown',
   threeOutsideUp: 'threeOutsideDown', bullThreePins: 'bearThreePins', invHeadShoulders: 'headShoulders',
+  bullBeltHold: 'bearBeltHold', bullRails: 'bearRails', bullKeyReversal: 'bearKeyReversal', bullFakey: 'bearFakey',
 };
 
 test('every pattern has a name, a direction, a rule and a meaning, and every key is tested', () => {
-  assert.ok(C.PATTERNS.length >= 39);
+  assert.ok(C.PATTERNS.length >= 48);
   const keys = new Set(C.PATTERNS.map(p => p.key));
   assert.equal(keys.size, C.PATTERNS.length, 'keys are unique');
   for (const p of C.PATTERNS) {
     assert.ok(p.name && p.rule && p.meaning, p.key);
     assert.ok(['bull', 'bear', 'neutral'].includes(p.dir), p.key);
   }
-  const tested = new Set([...Object.keys(BULL), ...Object.values(MIRROR), 'doji', 'longLeggedDoji', 'spinningTop']);
+  const tested = new Set([...Object.keys(BULL), ...Object.values(MIRROR), 'doji', 'longLeggedDoji', 'spinningTop', 'insideBar']);
   for (const k of keys) assert.ok(tested.has(k), `${k} has a test chart`);
 });
 
@@ -111,6 +117,30 @@ test('the doji family and spinning top are told apart', () => {
   assert.deepEqual(at([0, 0.8, -0.04, 0.02]), ['gravestoneDoji']);
   assert.deepEqual(at([0, 0.4, -0.4, 0.15]), ['spinningTop']);
   assert.deepEqual(at([0, 0.05, -0.05, 0.001]), [], 'a flat candle is too small to mean anything');
+});
+
+test('price action: inside bar, fakey, two-bar reversal and key reversal are told apart from their look-alikes', () => {
+  const at = (trend, pat, keys, opts = {}) => {
+    const B = chart(trend, pat);
+    return C.detectAt(B, B.length - 1, { keys, ...opts }).map(h => h.key);
+  };
+  // an inside bar needs a real mother candle and has to sit inside its wicks too
+  assert.deepEqual(at('flat', [[0, 0.5, -0.5, 0.4], [0.4, 0.45, -0.1, 0.1]], ['insideBar']), ['insideBar']);
+  assert.deepEqual(at('flat', [[0, 0.5, -0.5, 0.4], [0.4, 0.55, -0.1, 0.1]], ['insideBar']), [], 'its high pokes out');
+  assert.deepEqual(at('flat', [[0, 0.5, -0.5, 0.4], [0.4, 0.45, -0.3, 0.1]], ['insideBar']), [], 'too big to be a pause');
+  assert.deepEqual(at('flat', [[0, 0.2, -0.2, 0.1], [0.1, 0.15, -0.1, 0]], ['insideBar']), [], 'mother candle too small');
+  // a fakey's third candle has to close back above the inside low; a real break down is not one
+  const F = BULL.bullFakey;
+  assert.deepEqual(at('flat', [F[0], F[1], [0.1, 0.3, -0.35, -0.3]], ['bullFakey']), [], 'the break held');
+  assert.deepEqual(at('flat', [F[0], [0.4, 0.6, -0.2, 0.1], F[2]], ['bullFakey']), [], 'no inside candle');
+  // railroad tracks: the up candle must be about as big as the down candle
+  assert.deepEqual(at('down', [[0, 0.05, -1.05, -1.0], [-1.0, -0.4, -1.05, -0.45]], ['bullRails']), [], 'only half undone');
+  // key reversal: the low must go under the previous low and the close over the previous high
+  assert.deepEqual(at('down', [[0, 0.1, -0.6, -0.5], [-0.5, 0.4, -0.55, 0.3]], ['bullKeyReversal']), [], 'no new low');
+  assert.deepEqual(at('down', [[0, 0.1, -0.6, -0.5], [-0.5, 0.4, -0.9, 0.05]], ['bullKeyReversal']), [], 'closes under the previous high');
+  // a belt hold needs the trend it reverses
+  assert.deepEqual(at('up', BULL.bullBeltHold, ['bullBeltHold']), []);
+  assert.deepEqual(at('up', BULL.bullBeltHold, ['bullBeltHold'], { trend: false }), ['bullBeltHold']);
 });
 
 test('stars: volume at least 1.5x average and a 20-candle extreme each add one', () => {

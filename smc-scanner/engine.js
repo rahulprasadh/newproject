@@ -46,7 +46,7 @@
     // from candles.js (shape only: the zone is the context), off unless switched on
     patterns: {
       pin: true, hs: true, threePins: false, engulf: false,
-      star: false, piercing: false, tweezer: false, harami: false, three: false, doji: false,
+      star: false, piercing: false, tweezer: false, harami: false, three: false, doji: false, priceAction: false,
     },
     pinWick: 2,          // pin bar rejection wick is at least this many times the body
     pinWickPct: 0.5,     // and at least this share of the candle's range
@@ -78,6 +78,7 @@
     ['tweezer', [['tweezerBottom'], ['tweezerTop']], 2],
     ['harami', [['bullHarami', 'bullHaramiCross'], ['bearHarami', 'bearHaramiCross']], 2],
     ['doji', [['dragonflyDoji'], ['gravestoneDoji']], 1],
+    ['priceAction', [['bullFakey', 'bullRails', 'bullKeyReversal', 'bullBeltHold'], ['bearFakey', 'bearRails', 'bearKeyReversal', 'bearBeltHold']], 3],
   ];
 
   // Sessions in New York time, minutes after midnight [start, end).

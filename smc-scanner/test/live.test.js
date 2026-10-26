@@ -527,6 +527,75 @@ test('config: the example parses, notes are ignored, command-line options win', 
   assert.throws(() => runner.parseArgs(['--bogus']), /Unknown option/);
 });
 
+test('--plan: one print-only check; the whole plan of every timeframe, with the pattern lab', async () => {
+  const args = runner.parseArgs(['--plan', '--source', 'replay']);
+  assert.equal(args.once, true);
+  assert.equal(args.plan, true);
+  const cfgFile = path.join(tmpdir(), 'config.json');
+  fs.writeFileSync(cfgFile, JSON.stringify({ alerts: { telegram: { botToken: '123:abc', chatId: '42' } } }));
+  assert.equal(runner.loadConfig(cfgFile, args.overrides).alerts.telegram.botToken, '', 'no Telegram from a one-off look');
+  assert.equal(runner.loadConfig(cfgFile, args.overrides).alerts.telegram.chatId, '42');
+
+  const bars = sample().slice(0, 9000);
+  const cfg = runner.loadConfig(null, { source: 'replay', replay: { startIndex: 8000 }, engine: OPTS, timeframes: [5, 15] });
+  const S = new runner.LiveScanner(cfg, { dataDir: tmpdir(), notifier: collector(), log: quiet(), news: null, source: sources.replay(cfg.replay, { tfMinutes: 5, bars }) });
+  const r = await S.cycle();
+  assert.equal(r.ok, true, r.error);
+  const text = S.planReport(r);
+  for (const tf of [5, 15]) assert.match(text, new RegExp(`=== XAUUSD ${tf}m · .* candle · [\\d,.]+ ===\\n(BUY NOW|SELL NOW|IN A|WAIT)`));
+  assert.match(text, /\nBUY side: /);
+  assert.match(text, /\nSELL side: /);
+  assert.match(text, /\n {2}Next: /);
+  assert.match(text, /Pattern lab: (no proven edge|edge found|not enough patterns)/);
+  assert.match(text, /Not financial advice\.$/);
+  // the dashboard gets the lab and the scored patterns of the last candles
+  const T = S.apiState().timeframes['5'];
+  assert.ok(T.lab && T.lab.groups.length > 10 && T.lab.model);
+  assert.equal(T.lab.live, undefined, 'the fitted model stays in the scanner');
+  assert.ok(Array.isArray(T.patternsNow));
+  for (const h of T.patternsNow) {
+    assert.ok(h.i >= T.bars.length - 3 && h.i < T.bars.length, 'indices are in the window');
+    if (h.dir !== 'neutral') assert.ok(h.lab && typeof h.lab.text === 'string');
+  }
+  assert.match(S.planReport({ ok: false, error: 'feed down' }), /check failed \(feed down\)/);
+});
+
+test('plan text: a live trade with size and odds, warnings, scenarios and a pattern with its lab score', () => {
+  const side = (word, extra) => ({ word, stage: 'none', grade: null, steps: [], next: '', cancel: '', projection: null, odds: null, ...extra });
+  const plan = {
+    t: Date.UTC(2026, 8, 20, 18, 40) / 1000, price: 4350.5, headline: 'BUY NOW at 4,349.43', detail: 'Pin bar at the OB · grade A',
+    trade: { entry: 4349.43, sl: 4341.67, tp: 4364.95, rr: 2, odds: { p: 0.4, n: 25, evR: 0.2 } },
+    warnings: ['A trade the other way is still open from an earlier signal.'],
+    sides: {
+      buy: side('buy', { stage: 'armed', grade: 'A', steps: ['Sell-side liquidity swept: PDL 4,340.45 at 23:05'], next: 'price is in the zone', cancel: 'a close below 4,339.00',
+        projection: { entry: 4346.3, sl: 4341.4, tp: 4356.1, rr: 2 }, odds: { p: 0.3, n: 4, evR: -0.1 } }),
+      sell: side('sell', { next: 'a sweep of buy-side liquidity' }),
+    },
+    scenarios: [{ text: 'Sell-side EQL 4,340.00 taken first (62%)', confidence: 'medium' }],
+  };
+  const lab = { labelled: 900, model: { verdict: 'none', auc: 0.51, need: 600, top: { p: 0.5, bar: 0.49 } } };
+  const patternsNow = [{ name: 'Bullish engulfing', dir: 'bull', stars: 2, t: plan.t, lab: { reasons: ['swept PDL 4,340.45', 'London'], text: 'tested: 1 ATR its way first 49% of 1,530 times vs 48% for any candle · no edge' } }];
+  const text = alerts.planText({ tfMin: 5, plan, lab, patternsNow, forecast: null }, { timeZone: 'Asia/Kolkata', risk: { balance: 5000, percent: 1, currency: 'USD', usdRate: 1, contractSize: 100, minLot: 0.01, lotStep: 0.01 } });
+  const lines = text.split('\n');
+  assert.equal(lines[0], '=== XAUUSD 5m · 21 Sept, 00:10 candle · 4,350.50 ===');
+  assert.equal(lines[1], 'BUY NOW at 4,349.43');
+  assert.equal(lines[3], 'Entry 4,349.43  SL 4,341.67  TP 4,364.95 (2R)');
+  assert.match(lines[4], /^Size: 0\.06 lot risks \$/);
+  assert.equal(lines[5], 'Past setups that got this far: 40% won (n=25) → +0.20R expected per trade.');
+  assert.equal(lines[6], '! A trade the other way is still open from an earlier signal.');
+  assert.ok(lines.includes('BUY side: zone ready · grade A'));
+  assert.ok(lines.includes('  Planned trade: entry ≈ 4,346.30, SL ≈ 4,341.40, TP ≈ 4,356.10 (2R)'));
+  assert.ok(lines.includes('  Only 4 past setups got this far: too few to judge.'));
+  assert.ok(lines.includes('  - Sell-side EQL 4,340.00 taken first (62%) [medium confidence]'));
+  assert.ok(lines.includes('  - 00:10 Bullish engulfing ★★: swept PDL 4,340.45, London. Tested: 1 ATR its way first 49% of 1,530 times vs 48% for any candle · no edge'));
+  assert.match(text, /Pattern lab: no proven edge on this data \(AUC 0\.51/);
+  assert.equal(alerts.planText({ tfMin: 15, plan: null }), 'XAUUSD 15m: no trade plan yet (no closed candle)');
+  // the alert lines
+  assert.equal(alerts.candlesLine([{ name: 'Hammer', stars: 1, lab: { verdict: 'none', p: 0.5, record: { n: 400, p: 0.49, base: 0.48, verdict: 'same' } } }]), 'Candles: Hammer ★ (49% vs 48% usual, no edge)');
+  assert.equal(alerts.checkLine({ reasons: ['swept PDL 4,340.45'], text: 'tested: …' }), 'Candle check: swept PDL 4,340.45 · tested: …');
+  assert.equal(alerts.checkLine(null), null);
+});
+
 // ---------- end to end ----------
 
 test('replay end to end: an entry is alerted once, a restart does not repeat it, and /api/state is consistent', async () => {
@@ -550,6 +619,8 @@ test('replay end to end: an entry is alerted once, a restart does not repeat it,
   const entryAlerts = sentA.filter(a => a.kind === 'entry' && a.tfMin === 5 && a.t === entryT);
   assert.equal(entryAlerts.length, 1);
   assert.match(entryAlerts[0].text, /^(BUY|SELL) NOW · XAUUSD 5m · /);
+  // the entry candle as the pattern lab sees it: its context and its tested record
+  assert.match(entryAlerts[0].text, /\nCandle check: .*(tested|too few|not seen|out of sample)/);
   assert.ok(fs.existsSync(A.files.history) && fs.existsSync(A.files.state) && fs.existsSync(A.files.latest));
   assert.ok(/-replay-5m\.csv$/.test(A.files.history), 'replay data is kept apart from live history');
 

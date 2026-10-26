@@ -10,7 +10,9 @@ Finds this XAUUSD setup on 5m and 15m candles, shows it on a chart and alerts yo
 
 Every setup also gets a **grade** (A+, A, B, C) from its confluences, and every entry alert carries the stop, the target, the **lot size** for your risk, any **high-impact news** close by, and a **next-move forecast**.
 
-The **Trade plan** card says what to do at the current candle: **BUY NOW**, **SELL NOW**, **IN A TRADE**, or **WAIT**. For each side it shows what has to happen next, at which price, by when, and what cancels it. The **Patterns** tab knows 39 classic candlestick patterns and shows how each one actually did on your data.
+The **Trade plan** card says what to do at the current candle: **BUY NOW**, **SELL NOW**, **IN A TRADE**, or **WAIT**. For each side it shows what has to happen next, at which price, by when, and what cancels it. **`now.bat`** prints the same plan for 5m and 15m from live prices in one double-click.
+
+The **Patterns** tab knows 48 candlestick and price-action patterns. Its **pattern lab** tests every one of them in its context (liquidity sweep, SMC zone, FVG, extremes, session, trend, volume), out of sample, on your own data, and says plainly whether any of it predicts the next move.
 
 ## Start it on Windows (no installs)
 
@@ -19,6 +21,8 @@ The **Trade plan** card says what to do at the current candle: **BUY NOW**, **SE
    - If Windows warns that the file came from the internet, choose **Run** (or **More info → Run anyway**).
    - No Node.js? It downloads a private copy into `smc-scanner\runtime` (about 30 MB, no admin rights, checked against nodejs.org's SHA-256 list).
 3. Your browser opens **http://localhost:8787** in Live mode. Keep the black window open; close it to stop.
+
+**What should I do right now?** Double-click **`now.bat`**. It checks the latest prices once and prints the full trade plan for 5m and 15m: BUY NOW, SELL NOW, IN A TRADE or WAIT, what each side needs next and at which price, what cancels it, the scenarios, the next-move odds, and the latest candles with what the pattern lab found. It sends no Telegram message and leaves nothing running, so it is safe to use while `start.bat` runs. (Same thing from a terminal: `node live\runner.js --plan`.)
 
 From VS Code: open the folder, open a terminal (Ctrl+`) and run `.\smc-scanner\start.bat`.
 
@@ -73,11 +77,11 @@ In Replay the plan only knows candles up to the cursor, so it is exactly what yo
 
 ## Candlestick patterns
 
-`candles.js` finds 39 patterns:
+`candles.js` finds 48 patterns:
 
-- **One candle:** hammer, inverted hammer, hanging man, shooting star, the doji family (doji, dragonfly, gravestone, long-legged), spinning top, marubozu, pin bars.
-- **Two candles:** engulfing, harami, harami cross, piercing line, dark cloud cover, tweezer top and bottom, kicker.
-- **Three candles:** morning and evening star, morning and evening doji star, three white soldiers, three black crows, three inside up/down, three outside up/down, three pins, and the 3-candle head & shoulders.
+- **One candle:** hammer, inverted hammer, hanging man, shooting star, the doji family (doji, dragonfly, gravestone, long-legged), spinning top, marubozu, belt hold, pin bars.
+- **Two candles:** engulfing, harami, harami cross, piercing line, dark cloud cover, tweezer top and bottom, kicker, inside bar, two-bar reversal (railroad tracks), key reversal (outside reversal bar).
+- **Three candles:** morning and evening star, morning and evening doji star, three white soldiers, three black crows, three inside up/down, three outside up/down, three pins, fakey (a false break of an inside bar), and the 3-candle head & shoulders.
 
 The rules follow the classic definitions, adapted to a market that trades around the clock:
 
@@ -97,7 +101,45 @@ The **Candle patterns** chip on the chart marks the strong ones near the cursor.
 
 On the 6-month sample, patterns on their own work about 50% of the time, the same as an ordinary candle. On 5m, at a 20-candle low or high, piercing lines, tweezer bottoms and the 3-candle head & shoulders did a little better.
 
-That is why the strategy uses candles only as the **trigger** at a swept-liquidity order block, never as a signal by themselves. Six more of them can be switched on as entry confirmations in **Settings → Entry**: stars, three inside/outside, piercing/dark cloud, tweezers, harami, and dragonfly/gravestone doji.
+That is why the strategy uses candles only as the **trigger** at a swept-liquidity order block, never as a signal by themselves. Seven more groups can be switched on as entry confirmations in **Settings → Entry**: stars, three inside/outside, piercing/dark cloud, tweezers, harami, dragonfly/gravestone doji, and the price-action set (fakey, two-bar reversal, key reversal, belt hold).
+
+## The pattern lab: do candles predict anything here?
+
+Reading candles is about **context**: the same hammer means more after a liquidity sweep, at an order block, at the low of the day, with volume. `patternlab.js` measures exactly that, on whatever data is loaded (in Live, the scanner's own history, retested every hour).
+
+For every pattern it records, from what was known when the pattern closed:
+
+- **liquidity:** a level swept by the pattern or the 2 candles before it, and whether it was key liquidity (PDH/PDL, session high/low, equal highs/lows);
+- **SMC:** inside a marked OB/FVG zone of the same side, or into an open FVG;
+- **location:** a 20- or 50-candle low/high, discount or premium in the last 8 hours;
+- **trend:** the move into it, the stretch from the 50 EMA, the 1-hour trend;
+- **strength:** volume against average, size in ATR, how near its high (low) it closed;
+- **session:** Asia, London, New York.
+
+Then it checks what followed: did price reach **1 ATR in the pattern's direction before 1 ATR against** (an ordinary candle does this about half the time), and what a trade from the pattern's close made (stop 0.1 ATR beyond the pattern, 2R target, spread included).
+
+It reports each context against an ordinary candle, with a 95% range and both halves of the data. It also trains a small model **walk-forward**: each test period is judged by a model that only learned from earlier patterns, and the model also knows each pattern's own track record. The lab only says **edge** when the model's best-scored fifth beat the usual rate out of sample, in both halves of the test period, and made money at 2R. When that happens, every pattern shows the model's chance. Otherwise each pattern shows its tested record and **no edge**. Tests make sure it finds an edge that is really there (planted in synthetic data) and none in a random walk.
+
+**What it found on the 6-month sample** (spread 0.25):
+
+| Context | 5m: found | 5m: 1 ATR first | 5m: avg at 2R | 15m: found | 15m: 1 ATR first | 15m: avg at 2R |
+|---|---|---|---|---|---|---|
+| Every pattern | 22,684 | 49% | −0.07R | 7,223 | 49% | −0.01R |
+| Right after a liquidity sweep | 1,917 | 48% | −0.11R | 884 | 46% | −0.05R |
+| After a key-level sweep | 828 | 49% | −0.08R | 727 | 47% | −0.03R |
+| At a marked SMC zone | 114 | 52% | +0.01R | 72 | 44% | −0.35R |
+| At a 20-candle low/high | 6,758 | 49% | −0.06R | 2,191 | 48% | −0.04R |
+| Volume 1.5× or more | 5,527 | 50% | −0.04R | 2,248 | 49% | −0.01R |
+| Confirmed by the next candle | 6,716 | 49% | −0.05R | 2,074 | 50% | +0.05R |
+| **Model, best fifth (out of sample)** | 2,723 | 50% | −0.01R | 867 | 50% | +0.04R |
+
+An ordinary candle reaches 1 ATR its way first 49–50% of the time. The model's ranking scored an AUC of 0.50 on both timeframes, which is a coin flip. Busted patterns (trading the failure) and 5m patterns that agree with a 15m pattern did no better either. **On this data, no candlestick pattern predicts the next move, whatever its context.** Anyone selling one that does on intraday gold should show you this kind of out-of-sample test.
+
+What the lab is for:
+
+- it keeps you from trading a pattern because it looks good: every pattern in the Patterns tab, the trade plan, `now.bat` and the entry alerts (**Candle check**) carries its tested record;
+- it reruns on your own broker's data as the scanner collects it, and will say **edge** if one shows up there and survives out of sample;
+- it is why the strategy's edge, if there is one, has to come from the whole setup (sweep → CHoCH → volume candle → OB) and the 2R trade management, with the candle only as the timing trigger.
 
 ## The grade
 
@@ -141,9 +183,10 @@ These numbers check that the marks are right. They do not prove an edge: 30 trad
 
 | File | What it is |
 |---|---|
-| `start.bat`, `demo.bat` | Start the live scanner, or the replay demo, on Windows |
+| `start.bat`, `now.bat`, `demo.bat` | Start the live scanner, print the trade plan right now, or run the replay demo, on Windows |
 | `engine.js` | The detection engine. It reads one candle at a time and never looks ahead, so history, replay and live give the same signals. |
-| `candles.js` | The 39 candlestick patterns, their rules and their statistics |
+| `candles.js` | The 48 candlestick and price-action patterns, their rules and their statistics |
+| `patternlab.js` | The pattern lab: every pattern in its context, tested walk-forward |
 | `advisor.js` | The trade plan: buy, sell, hold or wait, with the levels for each side |
 | `predict.js` | The next-move forecaster, tested walk-forward |
 | `index.html` | The dashboard |

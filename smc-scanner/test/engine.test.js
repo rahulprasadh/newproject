@@ -675,7 +675,7 @@ test('extra entry patterns from candles.js: only when switched on, shape at the 
   const C = require('../candles.js');
   const B = loadSample().bars.slice(0, 15000);
   const base = SMC.run(B, { spread: 0.25 });
-  const all = { star: true, three: true, piercing: true, tweezer: true, harami: true, doji: true };
+  const all = { star: true, three: true, piercing: true, tweezer: true, harami: true, doji: true, priceAction: true };
   const more = SMC.run(B, { spread: 0.25, patterns: all });
   const names = new Set(base.setups.filter(s => s.entry).map(s => s.entry.pattern));
   for (const n of names) assert.ok(['Pin bar', 'Head & shoulders'].includes(n), `default patterns only, got ${n}`);

@@ -143,6 +143,13 @@ async function artifactScenario(browser) {
   await page.selectOption('#patCtx', 'zone');
   await page.waitForTimeout(300);
   ok('patterns: counting only inside SMC zones finds fewer', /inside an SMC zone/.test(await page.$eval('#patNote', el => el.innerText)));
+  // the pattern lab: its verdict, every context measured, and the honest note
+  await page.waitForFunction(() => document.querySelector('#patLab .labv'), null, { timeout: 30000 });
+  const lab = await page.$eval('#patLab', el => el.innerText);
+  ok('pattern lab: a verdict out of sample', /No proven edge on this data|Edge found, out of sample|Not enough patterns yet/i.test(lab), lab.slice(0, 120));
+  ok('pattern lab: every context is in the table', (await page.$$('#patLab .ptable > span')).length >= 5 * 15);
+  ok('pattern lab: the verdict reads in words', /NO PROVEN EDGE|EDGE FOUND|NOT ENOUGH/i.test(lab));
+  ok('pattern lab: replay says the lab saw the whole data', /after the replay cursor/.test(lab));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-patterns.png') });
   await page.selectOption('#patCtx', 'all');
   await page.click('#patTable [data-pat="bullEngulfing"]');
@@ -259,6 +266,14 @@ async function liveScenario(browser) {
     await page.waitForTimeout(300);
     ok('live 400 px: no horizontal overflow', (await overflow(page)) <= 0);
     await page.screenshot({ path: path.join(SHOTS, 'live-phone.png'), fullPage: true });
+    // the Patterns tab in Live mode shows the scanner's own lab
+    await page.click('#tabPatterns');
+    await page.waitForFunction(() => document.querySelector('#patLab') && document.querySelector('#patLab').innerText.length > 20, null, { timeout: 15000 });
+    const liveLab = await page.$eval('#patLab', el => el.innerText);
+    ok('live: the pattern lab comes from the scanner', /of the scanner's history/.test(liveLab) && /No proven edge|Edge found|Not enough patterns/i.test(liveLab), liveLab.slice(-160));
+    ok('live 400 px: Patterns tab has no horizontal overflow', (await overflow(page)) <= 0);
+    await page.screenshot({ path: path.join(SHOTS, 'live-patterns-phone.png'), fullPage: true });
+    await page.click('#tabSignals');
     // back to history still works
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.click('[data-mode="history"]');

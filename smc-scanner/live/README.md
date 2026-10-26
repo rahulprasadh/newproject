@@ -9,7 +9,7 @@ The live scanner runs on your PC. Every 5 minutes, just after a candle closes, i
 2. adds the closed ones to the history it keeps in `live\data`,
 3. runs the same SMC engine as the page on 5m, and on 15m built from the 5m candles,
 4. alerts each new signal once: in the console, in the browser and on Telegram,
-5. retrains the next-move forecaster on all the history collected so far (every 12 new candles),
+5. retrains the next-move forecaster and reruns the pattern lab on all the history collected so far (every 12 new candles),
 6. and shows everything on a dashboard at http://localhost:8787.
 
 It only reads prices. It never places orders.
@@ -22,10 +22,12 @@ node live\runner.js --open                  the same, and open the dashboard in 
 node live\runner.js --source yahoo          a source for this run only
 node live\runner.js --source replay --replay-start 2026-09-20 --fast --stay    the demo
 node live\runner.js --once                  one check, then exit (exit code 1 if it failed)
+node live\runner.js --plan                  one check, then the full trade plan for every timeframe (now.bat)
 node live\runner.js --help                  every option
 ```
 
-`npm start`, `npm run demo` and `npm test` run the same from the `smc-scanner` folder.
+`npm start`, `npm run plan`, `npm run demo` and `npm test` run the same from the `smc-scanner` folder.
+`--plan` never sends Telegram messages, so it is safe to run while the scanner is running.
 
 ## Sources
 
@@ -55,7 +57,8 @@ BUY NOW · XAUUSD 5m · Pin bar at OB · grade A
 Entry 4,349.18  SL 4,341.67  TP 4,364.20 (2R)
 Size: 0.06 lot risks $45.06 (1% of $5,000)
 Swept PDL 4,340.45 at 23:05 · CHoCH 00:10 · IFVG · OB
-Candles: Bullish engulfing ★★
+Candles: Bullish engulfing ★★ (49% vs 48% usual, no edge)
+Candle check: swept PDL 4,340.45, at the marked buy zone, London · tested: 1 ATR its way first 46% of 3,800 times vs 48% for any candle · no edge
 Confluence 3/4: Key liquidity (PDL), London or NY session, OB in discount
 ⚠ High-impact news: USD CPI m/m in 25 min (18:00)
 Next move: 58% up in the next 1h (medium confidence)

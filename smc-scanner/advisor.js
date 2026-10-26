@@ -20,6 +20,7 @@
     pin: 'pin bar', hs: 'head & shoulders', threePins: 'three pins', engulf: 'engulfing candle',
     star: 'morning/evening star', piercing: 'piercing line / dark cloud', tweezer: 'tweezer',
     harami: 'harami', three: 'three inside/outside', doji: 'dragonfly/gravestone doji',
+    priceAction: 'fakey, two-bar or key reversal, belt hold',
   };
 
   const defaultPrice = p => (Number.isFinite(p)

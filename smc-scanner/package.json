@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node live/runner.js --open",
     "demo": "node live/runner.js --source replay --replay-start 2026-09-20 --fast --stay --open",
-    "test": "node --test test/engine.test.js test/candles.test.js test/advisor.test.js test/predict.test.js test/sources.test.js test/live.test.js test/app.test.js",
+    "plan": "node live/runner.js --plan",
+    "test": "node --test test/engine.test.js test/candles.test.js test/patternlab.test.js test/advisor.test.js test/predict.test.js test/sources.test.js test/live.test.js test/app.test.js",
     "ui-check": "node tools/ui_check.js"
   }
 }
