@@ -769,9 +769,20 @@
     return d.length ? d[d.length >> 1] : 0;
   }
 
+  /*
+   * The UTC offset, in minutes, of a "New York close" server clock at server time s (seconds,
+   * read as if UTC). Most MT5 gold brokers run it: UTC+2 in winter and UTC+3 while the US is on
+   * summer time, so the trading day starts at 00:00 server time all year.
+   */
+  function nyCloseOffset(s) {
+    return nyTime(s - 120 * 60).offsetMin === -240 ? 180 : 120;
+  }
+
   // Parse a candle CSV from TradingView, MetaTrader, Dukascopy or similar.
-  // tzOffsetMin is the file's time zone for timestamps that carry none (MT5 server time is often +180).
-  function parseCSV(text, tzOffsetMin = 0) {
+  // tz is the file's time zone for times that carry none: minutes from UTC (MT5 server time is
+  // often +120 or +180), or 'nyclose' for a New York close server, converted candle by candle.
+  function parseCSV(text, tz = 0) {
+    const nyclose = tz === 'nyclose', tzOffsetMin = nyclose ? 0 : +tz || 0;
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     if (!lines.length) throw new Error('The file is empty.');
     const delim = [',', '\t', ';'].reduce((a, b) => (lines[0].split(b).length > lines[0].split(a).length ? b : a));
@@ -821,7 +832,9 @@
       const zoned = /(Z|[+-]\d{2}:?\d{2})$/.test(s);
       const ms = Date.parse(zoned ? s : s + 'Z');
       if (Number.isNaN(ms)) return NaN;
-      return Math.floor(ms / 1000) - (zoned ? 0 : tzOffsetMin * 60);
+      const sec = Math.floor(ms / 1000);
+      if (zoned) return sec;
+      return sec - (nyclose ? nyCloseOffset(sec) : tzOffsetMin) * 60;
     };
 
     const bars = [];
@@ -840,6 +853,6 @@
 
   return {
     Engine, DEFAULTS, SESSIONS, GRADES, run, resample, detectTimeframe, parseCSV, nyTime, sessionOf,
-    marketStatus, gradeOf,
+    marketStatus, gradeOf, nyCloseOffset,
   };
 }));

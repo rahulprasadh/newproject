@@ -184,6 +184,21 @@ test('reads MetaTrader, TradingView, Dukascopy and headerless CSV exports', () =
     + '2026.09.25\t23:40:00\t4285.69\t4286.00\t4284.52\t4284.76\t477\t0\t20';
   const [m] = SMC.parseCSV(mt5, 180);
   assert.deepEqual(m, { t: at, o: 4285.69, h: 4286, l: 4284.52, c: 4284.76, v: 477 });
+  // a New York close broker: UTC+3 in September (US summer time), UTC+2 in January, one file
+  const year = '<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\n'
+    + '2026.01.15\t10:00:00\t1\t2\t0.5\t1.5\t5\n2026.09.25\t23:40:00\t4285.69\t4286.00\t4284.52\t4284.76\t477';
+  const ny = SMC.parseCSV(year, 'nyclose');
+  assert.equal(ny[0].t, Date.UTC(2026, 0, 15, 8, 0) / 1000, 'winter: UTC+2');
+  assert.equal(ny[1].t, at, 'summer: UTC+3');
+  // either way the trading day starts at 00:00 on the server clock, which is 17:00 in New York
+  for (const d of [Date.UTC(2026, 0, 15), Date.UTC(2026, 6, 15)]) {
+    const t = d / 1000 - SMC.nyCloseOffset(d / 1000) * 60, n = SMC.nyTime(t);
+    assert.deepEqual([n.hour, n.minute], [17, 0], `00:00 server time on ${new Date(d).toISOString().slice(0, 10)}`);
+  }
+  // across the US switch to summer time (8 March 2026): Friday UTC+2, the next Monday UTC+3
+  assert.equal(SMC.nyCloseOffset(Date.UTC(2026, 2, 6, 12) / 1000), 120);
+  assert.equal(SMC.nyCloseOffset(Date.UTC(2026, 2, 9, 12) / 1000), 180);
+  assert.equal(SMC.nyCloseOffset(Date.UTC(2026, 10, 2, 12) / 1000), 120, 'after the switch back on 1 November');
 
   const tv = `time,open,high,low,close,Volume\n${at},4285.69,4286,4284.52,4284.76,477`;
   assert.equal(SMC.parseCSV(tv)[0].t, at);

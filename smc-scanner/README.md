@@ -160,6 +160,9 @@ Meeting all of them is **A+**, three quarters **A**, half **B**, less **C**. Use
 - **Live:** what the scanner sees now, updated every 20 seconds. Includes **Check now**, desktop alerts and the news list.
 - **Settings / Rules:** every engine condition, with the current numbers spelled out.
 - **Load your CSV:** MetaTrader 5/4, TradingView or Dukascopy exports, for checking your own history in the page.
+  - For an MT5 export, pick the file's time zone. Most gold brokers run **New York close time** (UTC+2 in winter, UTC+3 in US summer time; the daily candle opens at 00:00 on their clock). That choice converts each candle with its own offset, so sessions, PDH/PDL and kill zones stay right across the whole year.
+  - Brokers on UTC all year (Exness, for example): pick UTC.
+  - Years of history work: three years of 5m candles take about 20 seconds to test.
 
 Open `index.html` directly to use History and Replay without the scanner. It needs the internet for the chart library; the scanner serves its own copy.
 

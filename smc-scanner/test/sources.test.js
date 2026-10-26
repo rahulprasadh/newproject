@@ -69,6 +69,13 @@ test('Yahoo: no key, aligned candles only, gaps skipped, server clock and readab
     assert.deepEqual(bars[0], { t: t0, o: 4300, h: 4302, l: 4298, c: 4301, v: 100 });
     assert.equal(src.lastNow, t0 + 6 * 300 + 30);
     assert.equal(runner.closedOnly(bars, 300, src.lastNow).length, 5, 'the forming candle is dropped by the runner');
+    // about 10 min late, the newest candle Yahoo sends is the one forming 10 min ago, with seconds traded:
+    // by the clock it has closed, but it only counts once a later candle comes or the delay has passed
+    const late = t0 + 6 * 300 + 8 + 600;
+    assert.equal(runner.closedOnly(bars, 300, late).length, 6, 'by the clock alone the stub would count');
+    assert.deepEqual(runner.closedOnly(bars, 300, late, 600).map(b => b.t), [0, 1, 3, 4, 5].map(k => t0 + k * 300));
+    assert.equal(runner.closedOnly(bars, 300, t0 + 7 * 300 + 600 + 2, 600).length, 6, 'after the delay it counts');
+    assert.equal(src.info.delayedMinutes, 10);
     assert.equal((await src.fetchBars({ count: 2, now: t0 + 2000 })).length, 2);
     mode = 'error';
     await assert.rejects(src.fetchBars({ count: 3 }), /Yahoo Finance error: No data found/);

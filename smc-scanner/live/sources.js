@@ -388,7 +388,7 @@ function csvFile(cfg = {}, { tfMinutes = 5, baseDir } = {}) {
     } catch (err) {
       throw new Error(`Could not read ${file}: ${err.code === 'ENOENT' ? 'the file does not exist' : err.message}`);
     }
-    const bars = toTimeframe(SMC.parseCSV(text, +cfg.tzOffsetMinutes || 0), tfMinutes * 60, 'The CSV file');
+    const bars = toTimeframe(SMC.parseCSV(text, cfg.tzOffsetMinutes === 'nyclose' ? 'nyclose' : +cfg.tzOffsetMinutes || 0), tfMinutes * 60, 'The CSV file');
     return count ? bars.slice(-count) : bars;
   };
   return src;
@@ -415,7 +415,8 @@ function replay(cfg = {}, { tfMinutes = 5, everyMinutes = 5, resumeNow = null, s
   if (!data) {
     if (cfg.path) {
       const file = path.resolve(baseDir || process.cwd(), cfg.path);
-      data = /\.js$/i.test(file) ? loadSample(file).bars : SMC.parseCSV(fs.readFileSync(file, 'utf8'), +cfg.tzOffsetMinutes || 0);
+      const tz = cfg.tzOffsetMinutes === 'nyclose' ? 'nyclose' : +cfg.tzOffsetMinutes || 0;
+      data = /\.js$/i.test(file) ? loadSample(file).bars : SMC.parseCSV(fs.readFileSync(file, 'utf8'), tz);
       label = path.basename(file);
     } else {
       data = loadSample().bars;

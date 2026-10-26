@@ -61,7 +61,7 @@
     "path": "",
     "tzOffsetMinutes": 0
   },
-  "_csv": "path: a candle file that is re-read every check (relative paths start from this folder). tzOffsetMinutes: the file's time zone when its times carry none; MT5 server time is often 120 or 180.",
+  "_csv": "path: a candle file that is re-read every check (relative paths start from this folder). tzOffsetMinutes: the file's time zone when its times carry none, in minutes from UTC, or \"nyclose\" for an MT5 broker on New York close time (UTC+2 in winter, UTC+3 in US summer time), converted candle by candle.",
 
   "replay": {
     "startIndex": null,

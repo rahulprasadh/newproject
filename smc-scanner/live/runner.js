@@ -246,8 +246,20 @@ function parseArgs(argv) {
 
 // ---------- candles ----------
 
-// A candle is closed once its end (open time + timeframe) is at least 2 s in the past.
-const closedOnly = (bars, tfSec, nowSec) => bars.filter(b => b.t + tfSec <= nowSec - 2);
+/*
+ * A candle is closed once its end (open time + timeframe) is at least 2 s in the past. A delayed
+ * feed (Yahoo, about 10 min) sends its forming candle that far behind the clock, with only a few
+ * seconds traded: there a candle also needs a later candle from the feed, or its end further back
+ * than the delay.
+ */
+function closedOnly(bars, tfSec, nowSec, delaySec = 0) {
+  const latest = delaySec > 0 ? bars.reduce((m, b) => Math.max(m, b.t), -Infinity) : null;
+  return bars.filter(b => b.t + tfSec <= nowSec - 2
+    && (!(delaySec > 0) || b.t < latest || b.t + tfSec <= nowSec - delaySec - 2));
+}
+
+// How far behind the clock a feed sends its candles, in seconds (0 for a live feed).
+const feedDelay = src => Math.max(0, +((src && src.info && src.info.delayedMinutes) || 0)) * 60;
 
 const sameBar = (a, b) => a.o === b.o && a.h === b.h && a.l === b.l && a.c === b.c && (a.v || 0) === (b.v || 0);
 
@@ -772,7 +784,9 @@ class LiveScanner {
   }
 
   // True when the newest closed candle (fetched or saved) is the one before the candle that just closed.
+  // A delayed feed is always that far behind, so asking it again would not help.
   _lateCandle(fetched, now) {
+    if (feedDelay(this.source)) return false;
     const closed = closedOnly(fetched, this.baseSec, now);
     const saved = this.history.length ? this.history[this.history.length - 1].t : -Infinity;
     const newest = Math.max(saved, closed.length ? closed[closed.length - 1].t : -Infinity);
@@ -1025,7 +1039,7 @@ class LiveScanner {
     }
     if (src.name === 'mt5' && src.info && src.info.offsetSource === 'auto') this.state.mt5Offset = src.info.serverOffsetMinutes;
 
-    const m = mergeBars(this.history, closedOnly(fetched, this.baseSec, now));
+    const m = mergeBars(this.history, closedOnly(fetched, this.baseSec, now, feedDelay(src)));
     let bars = m.bars, trimmed = 0;
     if (bars.length > this.cfg.historyCandles + TRIM_SLACK) {
       trimmed = bars.length - this.cfg.historyCandles;

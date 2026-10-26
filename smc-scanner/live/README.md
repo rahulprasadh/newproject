@@ -92,7 +92,7 @@ Everything lives in `live\data` (not in git). Each source has its own files:
 
 | File | What it is |
 |---|---|
-| `XAUUSD-<source>-5m.csv` | The candle history collected so far, up to `historyCandles`. Load it in the page with **Load your CSV**. |
+| `XAUUSD-<source>-5m.csv` | The candle history collected so far, up to `historyCandles`, in UTC. Load it in the page with **Load your CSV** (time zone UTC). |
 | `state-XAUUSD-<source>.json` | The last candle processed per timeframe and the alerts already sent, so a restart never repeats an alert. |
 | `latest-XAUUSD-<source>.json` | The last scan: what the dashboard shows. |
 | `forecasts-XAUUSD-<source>.jsonl` | Every forecast made, so the dashboard can show how they turned out. |

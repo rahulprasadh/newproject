@@ -169,6 +169,37 @@ async function artifactScenario(browser) {
   ok('detail card shows setup odds for stopped setups', /Past (buy|sell) setups at this step/.test(odds), odds.slice(0, 100));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-odds.png') });
 
+  // Load your CSV: an MT5 export from a broker on New York close time, converted candle by candle
+  {
+    const { loadSample } = require(path.join(ROOT, 'live', 'sources.js'));
+    const SMC = require(path.join(ROOT, 'engine.js'));
+    const bars = loadSample().bars.slice(-3000);
+    const pad = n => String(n).padStart(2, '0');
+    const rows = bars.map(b => {
+      const d = new Date((b.t + (SMC.nyTime(b.t).offsetMin + 420) * 60) * 1000);
+      return `${d.getUTCFullYear()}.${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())}\t${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00\t${b.o}\t${b.h}\t${b.l}\t${b.c}\t${b.v}\t0\t20`;
+    });
+    const csv = '<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>\n' + rows.join('\n');
+    await page.click('[data-mode="history"]');
+    await page.click('#loadBtn');
+    ok('csv: the New York close time zone is offered', (await page.$$('#fileTz option[value="nyclose"]')).length === 1);
+    await page.selectOption('#fileTz', 'nyclose');
+    await page.setInputFiles('#file', { name: 'XAUUSD_M5_export.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await page.waitForFunction(() => /XAUUSD_M5_export\.csv/.test(document.querySelector('#src').innerText), null, { timeout: 10000 });
+    const src = await page.$eval('#src', el => el.innerText);
+    ok('csv: an MT5 export loads with every candle', /3,000 5m candles/.test(src), src);
+    ok('csv: no error', await page.$eval('#fileErr', el => el.hidden));
+    // the newest candle is the sample's last one (25 Sept 20:40 UTC), so every time came back to UTC
+    const { legend, utc } = await page.evaluate(() => ({
+      legend: document.querySelector('#legend').innerText,
+      utc: Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC',
+    }));
+    ok('csv: server times are converted back to UTC', !utc || /25 Sept, 20:40/.test(legend), legend.slice(0, 60));
+    await page.click('#loadBtn');
+    await page.click('#sampleBtn');
+    await page.waitForFunction(() => /getdata\.finance/.test(document.querySelector('#src').innerText), null, { timeout: 10000 });
+  }
+
   // dark theme
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.click('[data-mode="history"]');

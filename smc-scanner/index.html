@@ -330,15 +330,16 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
       <label class="check">Time zone of the file
         <select class="sel" id="fileTz">
           <option value="0">UTC</option>
-          <option value="120">UTC+2 (many MT5 brokers in winter)</option>
-          <option value="180">UTC+3 (many MT5 brokers in summer)</option>
+          <option value="nyclose">MT5 broker on New York close time (UTC+2 winter, UTC+3 summer)</option>
+          <option value="120">UTC+2 all year</option>
+          <option value="180">UTC+3 all year</option>
           <option value="330">UTC+5:30 (India)</option>
           <option value="-240">UTC−4 (New York, summer)</option>
         </select>
       </label>
       <button class="btn" id="sampleBtn" type="button">Back to sample data</button>
     </div>
-    <p class="hint">MetaTrader 5: open the chart, press Ctrl+U (Symbols) → Bars, pick XAUUSD M5, Request, Export Bars. TradingView: chart menu → Export chart data. Times that already include a zone or are Unix timestamps ignore this setting.</p>
+    <p class="hint">MetaTrader 5: press Ctrl+U (Symbols) → Bars, pick XAUUSD M5, set the dates, Request, Export Bars. Most gold brokers run New York close time (the daily candle opens at 00:00 on their clock): pick that, and every candle is converted with the right offset, summer and winter. Brokers on UTC all year (Exness, for example): pick UTC. TradingView: chart menu → Export chart data. Times that already include a zone or are Unix timestamps ignore this setting.</p>
     <p class="err" id="fileErr" hidden></p>
   </div>
 
@@ -1755,7 +1756,9 @@ const SRC_FIELDS = {
   mt5: [['txt', 'mt5.symbol', 'Symbol in Market Watch', 'XAUUSD'], ['txt', 'mt5.python', 'Python command or path', 'python']],
   twelvedata: [['pwd', 'twelvedata.apiKey', 'API key', 'paste your key']],
   yahoo: [['txt', 'yahoo.symbol', 'Yahoo symbol', 'GC=F']],
-  csv: [['txt', 'csv.path', 'File path', 'C:\\path\\XAUUSD_M5.csv'], ['num', 'csv.tzOffsetMinutes', 'File time zone (minutes from UTC)', -720, 840, 30]],
+  csv: [['txt', 'csv.path', 'File path', 'C:\\path\\XAUUSD_M5.csv'], ['sel', 'csv.tzOffsetMinutes', 'Time zone of the file', [
+    ['0', 'UTC'], ['nyclose', 'MT5 broker on New York close time (UTC+2 / UTC+3)'], ['120', 'UTC+2 all year'], ['180', 'UTC+3 all year'], ['330', 'UTC+5:30 (India)'],
+  ]]],
   replay: [['txt', 'replay.start', 'Start date', '2026-09-01']],
 };
 const TZ_LIST = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'UTC'];
@@ -2220,7 +2223,8 @@ $('#file').addEventListener('change', () => {
   r.onload = () => {
     const err = $('#fileErr');
     try {
-      const bars = SMC.parseCSV(String(r.result), +$('#fileTz').value);
+      const tz = $('#fileTz').value;
+      const bars = SMC.parseCSV(String(r.result), tz === 'nyclose' ? tz : +tz);
       if (bars.length < 200) throw new Error(`Only ${bars.length} candles found. Load at least a few days of data.`);
       leaveOtherModes();
       setBase(bars, { source: f.name });
