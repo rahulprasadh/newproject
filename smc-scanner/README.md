@@ -24,7 +24,7 @@ The **Patterns** tab knows 48 candlestick and price-action patterns. Its **patte
 
 **What should I do right now?** Double-click **`now.bat`**. It checks the latest prices once and prints the full trade plan for 5m and 15m: BUY NOW, SELL NOW, IN A TRADE or WAIT, what each side needs next and at which price, what cancels it, the scenarios, the next-move odds, and the latest candles with what the pattern lab found. It sends no Telegram message and leaves nothing running, so it is safe to use while `start.bat` runs. (Same thing from a terminal: `node live\runner.js --plan`.)
 
-From VS Code: open the folder, open a terminal (Ctrl+`) and run `.\smc-scanner\start.bat`.
+From VS Code: open the `newproject` folder, then press **Ctrl+Shift+B** for the trade plan right now, or **Terminal → Run Task → Gold SMC: …** for the live scanner, the demo or the tests. These run the same `.bat` files, so they work without Node.js installed. With Node.js 18+ you can also press ▶ in **Run and Debug** (Ctrl+Shift+D) and pick *Trade plan now*, *Live scanner + dashboard*, *Demo: replay the sample* or *Run all tests*. Or open a terminal (Ctrl+`) and run `.\smc-scanner\start.bat`.
 
 On first start the scanner picks a data source by itself (**auto**): MT5 if you have set it up, otherwise **Yahoo Finance gold futures**, which needs no account. Open the **Setup** tab in the dashboard to:
 

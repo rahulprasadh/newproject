@@ -740,11 +740,12 @@
       confidence: ltr.confidence, track: ltr.track,
     };
 
-    // only calls with a proven out-of-sample record get a vote
-    let lean = 0, votes = 0;
-    for (const h of horizons) if (h.confidence !== 'low') { lean += h.pUp - 0.5; votes++; }
-    if (pAbove !== null && liquidity.confidence !== 'low') { lean += pAbove - 0.5; votes++; }
-    const bias = !votes || Math.abs(lean) < 0.02 ? 'neutral' : lean > 0 ? 'up' : 'down';
+    // only calls with a proven out-of-sample record get a vote; basis names them ('dir60', 'liq')
+    let lean = 0;
+    const basis = [];
+    for (const h of horizons) if (h.confidence !== 'low') { lean += h.pUp - 0.5; basis.push('dir' + h.minutes); }
+    if (pAbove !== null && liquidity.confidence !== 'low') { lean += pAbove - 0.5; basis.push('liq'); }
+    const bias = !basis.length || Math.abs(lean) < 0.02 ? 'neutral' : lean > 0 ? 'up' : 'down';
 
     // drivers explain the liquidity call; without both levels, the longest up/down call
     const dm = both ? fold.models.liq : fold.models['dir' + o.horizons[o.horizons.length - 1]];
@@ -762,7 +763,7 @@
     for (const t in fold.models) trainedRows = Math.max(trainedRows, fold.models[t].n);
 
     return {
-      at: i, t: b.t, price: b.c, horizons, liquidity, bias, drivers, quality,
+      at: i, t: b.t, price: b.c, horizons, liquidity, bias, basis, drivers, quality,
       model: { trainedThrough: fold.trainEnd, trainedRows },
     };
   }

@@ -19,6 +19,13 @@ This repo gives Claude Code two things when you open it:
    plan right now): no installs or admin rights needed. See
    `smc-scanner/README.md`.
 
+   **From VS Code:** open this folder, then either press **Ctrl+Shift+B**
+   (trade plan now) or use **Terminal → Run Task → Gold SMC: …** (live
+   scanner, demo, tests). These run the same `.bat` files, so they work even
+   without Node.js. With Node.js 18+ installed you can also use **Run and
+   Debug** (Ctrl+Shift+D): pick *Trade plan now*, *Live scanner + dashboard*,
+   *Demo: replay the sample* or *Run all tests*, then press ▶ (F5).
+
 ## Setup
 
 ```bash

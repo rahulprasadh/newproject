@@ -1,0 +1,50 @@
+{
+  // Gold SMC Scanner: Terminal > Run Task, or Ctrl+Shift+B for the trade plan.
+  // On Windows these run the same .bat files as a double-click, so they work even without Node.js
+  // installed (the first run downloads a private copy into smc-scanner\runtime).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Gold SMC: trade plan now",
+      "type": "process",
+      "command": "node",
+      "args": ["live/runner.js", "--plan"],
+      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "now.bat"] },
+      "options": { "cwd": "${workspaceFolder}/smc-scanner" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Gold SMC: live scanner + dashboard",
+      "type": "process",
+      "command": "node",
+      "args": ["live/runner.js", "--open"],
+      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "start.bat"] },
+      "options": { "cwd": "${workspaceFolder}/smc-scanner" },
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Gold SMC: demo (replay the sample)",
+      "type": "process",
+      "command": "node",
+      "args": ["live/runner.js", "--source", "replay", "--replay-start", "2026-09-20", "--fast", "--stay", "--open"],
+      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "demo.bat"] },
+      "options": { "cwd": "${workspaceFolder}/smc-scanner" },
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Gold SMC: run all tests",
+      "type": "process",
+      "command": "npm",
+      "args": ["test"],
+      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "npm", "test"] },
+      "options": { "cwd": "${workspaceFolder}/smc-scanner" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

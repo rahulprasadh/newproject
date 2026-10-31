@@ -84,6 +84,9 @@ async function artifactScenario(browser) {
   const hist = await nextText(page);
   ok('history: next-move card renders numbers', /(Up|Down) \d+% in the next 1h/.test(hist) && /chance (buy|sell)-side is taken first|liquidity/.test(hist) && /right \d+%/.test(hist), `trained in ${Date.now() - t0} ms`);
   ok('history: forecast liquidity lines are listed', /Buy-side liquidity [\d,.]+/.test(hist));
+  ok('history: the lean says which calls it counts',
+    /Leaning (up|down)/.test(hist) ? /Counts only calls with a proven record: the /.test(hist) : /No clear lean/.test(hist),
+    JSON.stringify(hist.split('\n').slice(2, 5).join(' / ')));
   ok('Live mode is hidden without api/state', await page.$eval('#liveBtn', b => b.hidden));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-light.png') });
   ok('desktop light: no horizontal overflow', (await overflow(page)) <= 0);

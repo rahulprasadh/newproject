@@ -193,6 +193,7 @@ legend { font: 600 13px var(--font-label); letter-spacing: .08em; text-transform
 .next header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; }
 .next .bias { display: flex; align-items: center; gap: 8px; font: 700 19px var(--font-label); letter-spacing: .02em; color: var(--c); }
 .next .bias i { font-style: normal; font-size: 22px; line-height: 1; }
+.next .basis { margin: -4px 0 0; }
 .hz { display: grid; gap: 4px; }
 .hz .row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13.5px; }
 .hz .row b { font-weight: 600; color: var(--c); }
@@ -1197,6 +1198,17 @@ function renderNext() {
     const rng = h.range ? `<span class="rng">typical move ±<span class="num">${fmtP(h.range.p50)}</span> · 4 in 5 within ±<span class="num">${fmtP(h.range.p80)}</span></span>` : '';
     return `<div class="row" style="--c:${up ? P.bull : P.bear}"><span><b>${up ? 'Up' : 'Down'} ${pct(p)}</b> in the next ${hzName(h.minutes)}</span>${confChip(h.confidence)}${rng}</div>`;
   }).join('');
+  // say which calls the lean rests on, so a liquidity-only lean never reads as contradicting a low-confidence row
+  let basis = '';
+  if (Array.isArray(f.basis)) {
+    const name = k => k === 'liq' ? 'the liquidity call' : `the ${hzName(+k.slice(3))} call`;
+    const list = a => a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+    const all = [...f.horizons.map(h => 'dir' + h.minutes), ...(f.liquidity.pAboveFirst !== null ? ['liq'] : [])];
+    const left = all.filter(k => !f.basis.includes(k)).map(name);
+    basis = !f.basis.length
+      ? 'None of these calls has a proven record here yet, so there is no lean.'
+      : `Counts only calls with a proven record: ${list(f.basis.map(name))}.${left.length ? ` Not counted (low confidence): ${list(left)}.` : ''}`;
+  }
   const q = f.liquidity, lvl = (side, l) => `${side} liquidity <span class="num">${fmtP(l.price)}</span> (${escapeHtml(l.label)}, ${l.distAtr.toFixed(1)} ATR away)`;
   let draw;
   if (q.above && q.below && q.pAboveFirst !== null) {
@@ -1215,6 +1227,7 @@ function renderNext() {
   const b = state.bars[c];
   box.innerHTML = `${head(`from the ${tm(b.t)} close · <span class="num">${fmtP(b.c)}</span>`)}
     <div class="bias" style="--c:${arrow[2]}"><i aria-hidden="true">${arrow[0]}</i>${arrow[1]}</div>
+    ${basis ? `<p class="hint basis">${escapeHtml(basis)}</p>` : ''}
     <div class="hz">${hz}</div>
     <p class="draw">${draw}</p>${drv}
     <p class="hint">${honest} Odds, not a promise.</p>`;
@@ -2044,7 +2057,7 @@ function renderRules() {
     `<b>Trade.</b> Buys fill at the ask: the close plus a spread of ${v(fmtP(o.spread))}; sells fill at the close and exit when the ask reaches the stop or target. Stop ${v(o.slBufferAtr + '× ATR')} beyond ${o.slMode === 'sweep' ? 'the sweep wick' : "the order block or the pattern's wick, whichever is further"}. ${tgt} A candle that touches both stop and target counts as a loss.`,
     `<b>Candlestick patterns.</b> The Patterns tab finds ${CS.PATTERNS.length} patterns: the classic ones (hammer, engulfing, stars, harami, piercing, tweezers, soldiers and crows, three inside/outside, dojis, marubozu, belt holds, pins) and the price-action ones (inside bar, fakey, two-bar and key reversals). Gold trades around the clock, so the rules use bodies, wicks and closes instead of gaps; sizes are in ATR(14) before the pattern; a reversal needs the trend it reverses (the close ${CS.TREND_LEN} candles earlier at least ${CS.TREND_ATR} ATR away) and has to make that stretch's low or high. Each one is scored on this data against an ordinary candle, and the <b>pattern lab</b> tests them with their context (sweep, zone, FVG, extreme, session, trend, volume) out of sample.`,
     `<b>Trade plan.</b> At the cursor: BUY NOW or SELL NOW when an entry has just printed and price is still within ${ADV.CHASE_R}R of it; otherwise what each side needs next, at which price, by when, and what cancels it. Planned entries are where price first reaches the zone, stops beyond the order block, as the engine trades them.`,
-    `<b>Next move.</b> A model trained on this data's own history scores how often, from candles like this one, price went up over the next hours and which side's liquidity was taken first. It is only tested on candles it never saw, and the card says how often it was right.`,
+    `<b>Next move.</b> A model trained on this data's own history scores how often, from candles like this one, price went up over the next hours and which side's liquidity was taken first. It is only tested on candles it never saw, and the card says how often it was right. The arrow at the top (leaning up or down) counts only the calls with a proven record and names them, so it can point the other way from a low-confidence row below it.`,
     `<b>No peeking.</b> Each mark appears on the candle where it became known, so replay shows exactly what you would have seen live.`,
   ].map(x => `<li>${x}</li>`).join('');
 }

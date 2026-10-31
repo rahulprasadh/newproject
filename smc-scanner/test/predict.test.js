@@ -235,6 +235,11 @@ test('forecast gives probabilities, ranges, liquidity targets and drivers from o
     }
     assert.ok(['low', 'medium', 'high'].includes(L.confidence));
     assert.ok(['up', 'down', 'neutral'].includes(f.bias));
+    // the lean counts exactly the calls that are not low confidence, and nothing when none qualify
+    const voters = [...f.horizons.filter(h => h.confidence !== 'low').map(h => 'dir' + h.minutes),
+      ...(L.pAboveFirst !== null && L.confidence !== 'low' ? ['liq'] : [])];
+    assert.deepEqual(f.basis, voters);
+    if (!f.basis.length) assert.equal(f.bias, 'neutral');
     assert.ok(f.drivers.length > 0 && f.drivers.length <= 3);
     for (const d of f.drivers) {
       assert.ok(P.NAMES.includes(d.name) && Number.isFinite(d.effect));
