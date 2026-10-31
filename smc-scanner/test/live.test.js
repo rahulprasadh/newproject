@@ -13,8 +13,8 @@ const sources = require('../live/sources.js');
 const alerts = require('../live/alerts.js');
 
 const LIVE = path.join(__dirname, '..', 'live');
-// python3 on Linux and macOS, python on Windows; PYTHON overrides
-const PY = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+// Python for the MT5 helper tests; they are skipped with the reason when it is missing (see python.js)
+const { PY, skip: NO_PYTHON } = require('./python.js');
 const HELPER = path.join(LIVE, 'mt5_bars.py');
 const OPTS = { spread: 0.25 };
 
@@ -427,7 +427,7 @@ function helper(args, fake) {
   return { code: r.status, out: JSON.parse(r.stdout.trim()), err: r.stderr };
 }
 
-test('MT5 helper converts server time to UTC with the measured offset (python3 -I, fake MT5)', async () => {
+test('MT5 helper converts server time to UTC with the measured offset (python3 -I, fake MT5)', { skip: NO_PYTHON }, async () => {
   const dir = tmpdir();
   const t0 = 1790000100, now = t0 + 130, off = 10800;   // server is UTC+3
   const rates = [-600, -300, 0].map((d, k) => ({ time: t0 + d + off, open: 4300 + k, high: 4302 + k, low: 4299 + k, close: 4301 + k, tick_volume: 50 + k }));

@@ -199,7 +199,7 @@ These numbers check that the marks are right. They do not prove an edge: 30 trad
 | `live/mt5/GoldSMCExport.mq5` | The MT5 expert that exports candles (reads prices only, never trades) |
 | `live/mt5_bars.py` | The Python route to MT5 |
 | `vendor/` | A local copy of TradingView Lightweight Charts 4.2.3 (Apache 2.0) |
-| `test/` | Tests: `npm test`, or `node --test test/*.test.js` (Node 20+) |
+| `test/` | Tests: `test.bat`, `npm test`, or `node --test test/*.test.js` (Node 20+). Without Python 3, the two MT5 Python helper tests are skipped with the reason; the MT5 expert route needs no Python. |
 | `tools/ui_check.js` | Browser check with Playwright: `node tools/ui_check.js` |
 
 Live settings and keys go in `live/config.json` (the Setup tab writes it; it is git-ignored). The details of every option are in `live/config.example.json`, and more about the live scanner in `live/README.md`.

@@ -11,8 +11,8 @@ const SMC = require('../engine.js');
 const runner = require('../live/runner.js');
 const sources = require('../live/sources.js');
 
-// python3 on Linux and macOS, python on Windows; PYTHON overrides
-const PY = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+// Python for the MT5 helper tests; they are skipped with the reason when it is missing (see python.js)
+const { PY, skip: NO_PYTHON } = require('./python.js');
 const HELPER = path.join(__dirname, '..', 'live', 'mt5_bars.py');
 const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'smc-src-'));
 
@@ -139,7 +139,7 @@ test('MT5 exporter file: finds the gold export, converts to UTC and spots a stop
   await assert.rejects(none.fetchBars({}), /attach the GoldSMCExport expert/);
 });
 
-test('MT5 helper finds the broker name for XAUUSD (XAUUSD.m, GOLD) with --find-symbol', () => {
+test('MT5 helper finds the broker name for XAUUSD (XAUUSD.m, GOLD) with --find-symbol', { skip: NO_PYTHON }, () => {
   const dir = tmpdir(), t0 = 1790000100, off = 10800;
   const rates = [{ time: t0 + off, open: 1, high: 2, low: 0.5, close: 1.5, tick_volume: 9 }];
   const ticks = [{ time: t0 + off, time_msc: (t0 + off) * 1000 }, { time: t0 + off + 1, time_msc: (t0 + off + 1) * 1000 }];
