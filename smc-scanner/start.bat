@@ -37,6 +37,8 @@ if not defined NODE (
 echo.
 rem now.bat: one check, the trade plan printed here, nothing left running
 if defined SMC_NOW goto now
+rem test.bat: the test suite, through the npm next to this Node.js
+if defined SMC_TEST goto test
 echo Starting the Gold SMC Scanner. The dashboard opens in your browser (http://localhost:8787).
 echo Keep this window open while you use it; close it to stop.
 echo.
@@ -54,5 +56,17 @@ echo.
 set "CODE=%errorlevel%"
 echo.
 echo Double-click now.bat again for a fresh plan. For alerts as they happen, use start.bat.
+pause
+exit /b %CODE%
+
+:test
+rem npm test calls "node", so the private copy goes first on PATH (npm.cmd sits next to it)
+if not "%NODE%"=="node" set "PATH=%~dp0runtime\node;%PATH%"
+echo Running all the tests.
+echo.
+call npm test %*
+set "CODE=%errorlevel%"
+echo.
+if "%CODE%"=="0" (echo All tests passed.) else (echo Some tests failed, see above.)
 pause
 exit /b %CODE%

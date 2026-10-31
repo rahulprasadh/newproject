@@ -186,7 +186,7 @@ These numbers check that the marks are right. They do not prove an edge: 30 trad
 
 | File | What it is |
 |---|---|
-| `start.bat`, `now.bat`, `demo.bat` | Start the live scanner, print the trade plan right now, or run the replay demo, on Windows |
+| `start.bat`, `now.bat`, `demo.bat`, `test.bat` | Start the live scanner, print the trade plan right now, run the replay demo, or run all the tests, on Windows |
 | `engine.js` | The detection engine. It reads one candle at a time and never looks ahead, so history, replay and live give the same signals. |
 | `candles.js` | The 48 candlestick and price-action patterns, their rules and their statistics |
 | `patternlab.js` | The pattern lab: every pattern in its context, tested walk-forward |

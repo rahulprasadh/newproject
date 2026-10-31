@@ -40,7 +40,7 @@
       "type": "process",
       "command": "npm",
       "args": ["test"],
-      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "npm", "test"] },
+      "windows": { "command": "cmd.exe", "args": ["/d", "/c", "test.bat"] },
       "options": { "cwd": "${workspaceFolder}/smc-scanner" },
       "group": { "kind": "test", "isDefault": true },
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
