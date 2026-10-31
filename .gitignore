@@ -1,0 +1,17 @@
+# Trading skill outputs: reports, trade journal and thesis state.
+# This repo is public, so keep positions and P&L out of git.
+reports/
+state/
+
+# Secrets
+.env
+.env.*
+
+__pycache__/
+*.pyc
+.venv/
+smc-scanner/live/config.json
+smc-scanner/live/config.broken.json
+# the private Node.js copy start.bat downloads
+smc-scanner/runtime/
+*.zip

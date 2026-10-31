@@ -1,0 +1,85 @@
+name: Gold SMC Scanner tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'smc-scanner/**'
+      - '.github/workflows/smc-scanner.yml'
+  pull_request:
+    paths:
+      - 'smc-scanner/**'
+      - '.github/workflows/smc-scanner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # the MT5 helper tests run mt5_bars.py against a fake MetaTrader 5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tests
+        working-directory: smc-scanner
+        run: npm test
+
+  windows-start:
+    name: Windows start.bat without Node.js installed
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: start.bat downloads a private Node.js and runs a check
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\system32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+          where node >nul 2>nul && (echo Node.js is still on PATH & exit /b 1)
+          echo.| smc-scanner\start.bat --once --source replay --data-dir "%RUNNER_TEMP%\scan1"
+          if errorlevel 1 exit /b 1
+          if not exist smc-scanner\runtime\node\node.exe (echo runtime\node\node.exe is missing & exit /b 1)
+          smc-scanner\runtime\node\node.exe -v
+      - name: the next start uses that copy without downloading
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\system32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+          echo.| smc-scanner\start.bat --once --source replay --data-dir "%RUNNER_TEMP%\scan2" > "%RUNNER_TEMP%\second.txt" 2>&1
+          set "CODE=%errorlevel%"
+          type "%RUNNER_TEMP%\second.txt"
+          if not "%CODE%"=="0" exit /b 1
+          findstr /c:"Downloading Node.js" "%RUNNER_TEMP%\second.txt" >nul && (echo It downloaded Node.js again & exit /b 1)
+          exit /b 0
+      - name: now.bat prints the trade plan
+        shell: cmd
+        run: |
+          set "PATH=%SystemRoot%\system32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+          echo.| smc-scanner\now.bat --source replay --data-dir "%RUNNER_TEMP%\scan3" > "%RUNNER_TEMP%\now.txt" 2>&1
+          set "CODE=%errorlevel%"
+          type "%RUNNER_TEMP%\now.txt"
+          if not "%CODE%"=="0" exit /b 1
+          findstr /c:"=== XAUUSD 5m" "%RUNNER_TEMP%\now.txt" >nul || (echo No 5m plan printed & exit /b 1)
+          findstr /c:"=== XAUUSD 15m" "%RUNNER_TEMP%\now.txt" >nul || (echo No 15m plan printed & exit /b 1)
+          findstr /c:"Pattern lab" "%RUNNER_TEMP%\now.txt" >nul || (echo No pattern lab line & exit /b 1)
+          exit /b 0
+      # the MT5 helper tests need Python, which the stripped PATH below hides, so it goes in by PYTHON
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: test.bat runs the tests with that copy
+        shell: cmd
+        run: |
+          set "PYTHON=%pythonLocation%\python.exe"
+          set "PATH=%SystemRoot%\system32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+          echo.| smc-scanner\test.bat
+          if errorlevel 1 exit /b 1

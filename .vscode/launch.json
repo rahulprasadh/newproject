@@ -1,0 +1,48 @@
+{
+  // Gold SMC Scanner: pick one in Run and Debug (Ctrl+Shift+D), then press the green play button or F5.
+  // These need Node.js 18+ on this PC. Without it, use Terminal > Run Task (tasks.json): the .bat files
+  // there download a private copy of Node.js the first time.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Trade plan now (5m + 15m)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/smc-scanner/live/runner.js",
+      "args": ["--plan"],
+      "cwd": "${workspaceFolder}/smc-scanner",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Live scanner + dashboard",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/smc-scanner/live/runner.js",
+      "args": ["--open"],
+      "cwd": "${workspaceFolder}/smc-scanner",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Demo: replay the sample",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/smc-scanner/live/runner.js",
+      "args": ["--source", "replay", "--replay-start", "2026-09-20", "--fast", "--stay", "--open"],
+      "cwd": "${workspaceFolder}/smc-scanner",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Run all tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["test"],
+      "cwd": "${workspaceFolder}/smc-scanner",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
